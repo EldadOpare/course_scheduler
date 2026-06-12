@@ -13,10 +13,17 @@ interface TimetableState {
   semesterId: string | null;
   isLoading: boolean;
 
+  // What's available this semester. null = no selection saved yet,
+  // which means everything is in play.
+  activeCourses: string[] | null;
+  activeRooms: string[] | null;
+
   setDataset:    (ds: Dataset) => void;
   setPlacements: (p: Placement[]) => void;
   setValidation: (v: ValidationResult | null) => void;
   setSemesterId: (id: string) => void;
+  setActiveCourses: (codes: string[] | null) => void;
+  setActiveRooms:   (ids: string[] | null) => void;
 
   upsertPlacement: (p: Placement) => void;
   removePlacement: (key: string) => void;
@@ -45,11 +52,28 @@ export const useTimetable = create<TimetableState>((set, get) => ({
   validation:  null,
   semesterId:  null,
   isLoading:   false,
+  activeCourses: null,
+  activeRooms:   null,
 
   setDataset:    (ds) => set({ dataset: ds }),
   setValidation: (v)  => set({ validation: v }),
   setSemesterId: (id) => set({ semesterId: id }),
   setPlacements: (placements) => set({ placements }),
+
+  setActiveCourses: (codes) => {
+    set({ activeCourses: codes });
+    if (SUPABASE_CONFIGURED) {
+      supabase.from("settings")
+        .upsert({ key: "active_courses", value: { items: codes } }).then();
+    }
+  },
+  setActiveRooms: (ids) => {
+    set({ activeRooms: ids });
+    if (SUPABASE_CONFIGURED) {
+      supabase.from("settings")
+        .upsert({ key: "active_rooms", value: { items: ids } }).then();
+    }
+  },
 
   upsertPlacement: (p) => {
     const k = mkKey(p);

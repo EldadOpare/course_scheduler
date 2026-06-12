@@ -6,8 +6,9 @@ import {
 } from "@dnd-kit/core";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import {
-  CalendarDays, Sparkles, ChevronDown, ChevronRight, X, Loader2,
+  CalendarDays, ChevronDown, ChevronRight, X, Loader2, Search, Check,
   Wand2, Download, CheckCircle2, AlertTriangle, Bookmark, FilterX, Trash2, CheckCheck,
+  ListChecks, LayoutGrid, Columns3,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import {
@@ -68,11 +69,11 @@ function layoutGrid(
 }
 
 function PlacementChip({
-  placement, lane, lanes, flagged, duration, top, cohort, facultyName, onClick,
+  placement, lane, lanes, flagged, duration, top, cohort, facultyName, roomName, onClick,
 }: {
   placement: Placement; lane: number; lanes: number; flagged: boolean;
   duration?: number; top: number; cohort?: string; facultyName?: string;
-  onClick?: () => void;
+  roomName?: string; onClick?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: mkKey(placement),
@@ -97,15 +98,22 @@ function PlacementChip({
     >
       <div className="truncate">{placement.course}{cohort ? ` · ${cohort}` : ""}</div>
       <div className="truncate opacity-50 text-[9px] uppercase tracking-[0.06em]">{placement.kind}</div>
-      {facultyName && dur >= 60 && (
+      {roomName && dur >= 60 && (
+        <div className="truncate opacity-70 text-[9px]">{roomName}</div>
+      )}
+      {facultyName && dur >= 90 && (
         <div className="truncate opacity-60 text-[9px]">{facultyName}</div>
       )}
     </div>
   );
 }
 
-function DropCell({ day, timeMin, top, hour }: { day: string; timeMin: number; top: number; hour: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `${day}|${timeMin}` });
+function DropCell({ day, timeMin, top, hour, room }: {
+  day: string; timeMin: number; top: number; hour: boolean; room?: string;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: room ? `${day}|${timeMin}|${room}` : `${day}|${timeMin}`,
+  });
   return (
     <div
       ref={setNodeRef}
@@ -120,10 +128,10 @@ function DropCell({ day, timeMin, top, hour }: { day: string; timeMin: number; t
 }
 
 function UnscheduledItem({
-  courseCode, section, kind, index, cohort, onClick,
+  courseCode, section, kind, index, cohort, meetingNo, onClick,
 }: {
   courseCode: string; section: number; kind: string; index: number;
-  cohort?: string; onClick: () => void;
+  cohort?: string; meetingNo?: number; onClick: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `unsched|${courseCode}|${section}|${kind}|${index}`,
@@ -139,7 +147,9 @@ function UnscheduledItem({
         isDragging ? "opacity-40" : "",
       )}
     >
-      <span className="truncate text-foreground">{courseCode}{cohort ? ` · ${cohort}` : ""}</span>
+      <span className="truncate text-muted-foreground">
+        {cohort ? `Cohort ${cohort}` : "Session"}{meetingNo ? ` · ${meetingNo}` : ""}
+      </span>
       <span className={cn(
         "px-1.5 py-0.5 rounded text-[9px] tracking-[0.05em] uppercase shrink-0 ml-1",
         KIND_COLOR[kind] ?? "bg-muted border-border text-muted-foreground",
@@ -226,7 +236,7 @@ function Inspector({
           disabled={loading}
           className="flex items-center justify-center gap-1.5 w-full py-2 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
         >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
           {loading ? "Loading..." : "Suggest slots"}
         </button>
         {options.map((opt, i) => (
@@ -550,8 +560,165 @@ function SnapshotsModal({
   );
 }
 
+function PickList<T>({
+  title, items, idOf, labelOf, subOf, selected, onChange,
+}: {
+  title: string;
+  items: T[];
+  idOf: (x: T) => string;
+  labelOf: (x: T) => string;
+  subOf?: (x: T) => string;
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [q, setQ] = useState("");
+  const visible = items.filter(x =>
+    !q || labelOf(x).toLowerCase().includes(q.toLowerCase())
+      || idOf(x).toLowerCase().includes(q.toLowerCase()),
+  );
+  return (
+    <div className="flex-1 min-w-0 flex flex-col border border-border rounded-xl overflow-hidden">
+      <div className="px-3 py-2.5 border-b border-border flex items-center justify-between gap-2 bg-muted/30">
+        <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">
+          {title} · {selected.size}/{items.length}
+        </span>
+        <div className="flex gap-1">
+          <button
+            onClick={() => onChange(new Set(items.map(idOf)))}
+            className="px-2 py-1 text-[10px] rounded-md border border-border hover:bg-muted transition-colors"
+          >All</button>
+          <button
+            onClick={() => onChange(new Set())}
+            className="px-2 py-1 text-[10px] rounded-md border border-border hover:bg-muted transition-colors"
+          >None</button>
+        </div>
+      </div>
+      <div className="px-3 py-2 border-b border-border">
+        <input
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="Search..."
+          className="w-full text-xs bg-transparent outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+        {visible.map(x => {
+          const id = idOf(x);
+          const on = selected.has(id);
+          return (
+            <button
+              key={id}
+              onClick={() => {
+                const next = new Set(selected);
+                if (on) next.delete(id); else next.add(id);
+                onChange(next);
+              }}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-xs transition-colors",
+                on ? "bg-primary/5 text-foreground" : "text-muted-foreground hover:bg-muted/50",
+              )}
+            >
+              <span className={cn(
+                "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                on ? "bg-primary border-primary text-primary-foreground" : "border-border bg-background",
+              )}>
+                {on && <Check className="h-3 w-3" />}
+              </span>
+              <span className="truncate flex-1">{labelOf(x)}</span>
+              {subOf && <span className="text-[10px] text-muted-foreground/60 shrink-0">{subOf(x)}</span>}
+            </button>
+          );
+        })}
+        {!visible.length && (
+          <p className="text-xs text-muted-foreground italic text-center py-4">No matches.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AvailabilityModal({
+  dataset, activeCourses, activeRooms, onSave, onClose,
+}: {
+  dataset: Dataset;
+  activeCourses: string[] | null;
+  activeRooms: string[] | null;
+  onSave: (courses: string[], rooms: string[]) => void;
+  onClose: () => void;
+}) {
+  const [courseSel, setCourseSel] = useState<Set<string>>(
+    () => new Set(activeCourses ?? dataset.courses.map(c => c.code)),
+  );
+  const [roomSel, setRoomSel] = useState<Set<string>>(
+    () => new Set(activeRooms ?? dataset.rooms.map(r => r.id)),
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-foreground/20 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative w-full max-w-[820px] h-[80vh] flex flex-col rounded-xl border border-border bg-background shadow-xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div>
+            <h2 className="text-sm text-foreground">This semester</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Pick the courses running this semester and the classrooms available for scheduling.
+              Generate and the unscheduled list only use what's ticked here.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 flex gap-4 p-4">
+          <PickList
+            title="Courses"
+            items={dataset.courses}
+            idOf={c => c.code}
+            labelOf={c => `${c.code} — ${c.title}`}
+            selected={courseSel}
+            onChange={setCourseSel}
+          />
+          <PickList
+            title="Classrooms"
+            items={dataset.rooms}
+            idOf={r => r.id}
+            labelOf={r => r.name}
+            subOf={r => `${r.capacity} seats`}
+            selected={roomSel}
+            onChange={setRoomSel}
+          />
+        </div>
+
+        <div className="px-5 py-4 border-t border-border flex items-center justify-between shrink-0">
+          <span className="text-xs text-muted-foreground">
+            {courseSel.size} course{courseSel.size !== 1 ? "s" : ""} · {roomSel.size} classroom{roomSel.size !== 1 ? "s" : ""} in play
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onSave([...courseSel], [...roomSel])}
+              className="px-4 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Save selection
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Timetable() {
-  const { placements, dataset, validation, upsertPlacement, applyDraft, setValidation } = useTimetable();
+  const {
+    placements, dataset, validation, upsertPlacement, applyDraft, setValidation,
+    activeCourses, activeRooms, setActiveCourses, setActiveRooms,
+  } = useTimetable();
   const [activeDrag, setActiveDrag] = useState<Placement | null>(null);
   const [inspector, setInspector] = useState<InspectorTarget | null>(null);
   const [trayOpen, setTrayOpen] = useState(
@@ -562,6 +729,9 @@ export default function Timetable() {
   const [genOptions, setGenOptions] = useState<GenerateOption[] | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const [snapsOpen, setSnapsOpen] = useState(false);
+  const [availOpen, setAvailOpen] = useState(false);
+  const [view, setView] = useState<"week" | "day">("week");
+  const [dayFocus, setDayFocus] = useState("Mon");
   const [filterMajor, setFilterMajor] = useState("");
   const [filterYear, setFilterYear] = useState(0);
   const [filterFaculty, setFilterFaculty] = useState("");
@@ -575,6 +745,43 @@ export default function Timetable() {
   );
 
   const durations = dataset?.durations ?? DURATIONS;
+
+  // What's in play this semester. The engine only sees these courses and
+  // rooms — but anything already placed stays included so existing chips
+  // never break validation with "unknown id" errors.
+  const engineDataset = useMemo(() => {
+    if (!dataset) return null;
+    const placedCourses = new Set(placements.map(p => p.course));
+    const placedRooms = new Set(placements.map(p => p.room));
+    const courseSet = activeCourses ? new Set(activeCourses) : null;
+    const roomSet = activeRooms ? new Set(activeRooms) : null;
+    return {
+      ...dataset,
+      courses: courseSet
+        ? dataset.courses.filter(c => courseSet.has(c.code) || placedCourses.has(c.code))
+        : dataset.courses,
+      rooms: roomSet
+        ? dataset.rooms.filter(r => roomSet.has(r.id) || placedRooms.has(r.id))
+        : dataset.rooms,
+    };
+  }, [dataset, activeCourses, activeRooms, placements]);
+
+  // Strictly-selected course codes drive the unscheduled tray.
+  const semesterCourses = useMemo(() => {
+    if (!dataset) return [];
+    if (!activeCourses) return dataset.courses;
+    const sel = new Set(activeCourses);
+    return dataset.courses.filter(c => sel.has(c.code));
+  }, [dataset, activeCourses]);
+
+  // Rooms shown as columns in the day view.
+  const semesterRooms = useMemo(() => {
+    if (!dataset) return [];
+    if (!activeRooms) return dataset.rooms;
+    const sel = new Set(activeRooms);
+    const placedRooms = new Set(placements.map(p => p.room));
+    return dataset.rooms.filter(r => sel.has(r.id) || placedRooms.has(r.id));
+  }, [dataset, activeRooms, placements]);
 
   // I derived the grid's columns and rows from the timegrid settings (and
   // I keyed days by the short names the engine uses, because keying them
@@ -668,6 +875,10 @@ export default function Timetable() {
     () => new Map((dataset?.faculty ?? []).map(f => [f.id, f.name])),
     [dataset],
   );
+  const roomOf = useMemo(
+    () => new Map((dataset?.rooms ?? []).map(r => [r.id, r.name])),
+    [dataset],
+  );
 
   const handleDragStart = useCallback((e: DragStartEvent) => {
     const d = e.active.data.current;
@@ -677,14 +888,16 @@ export default function Timetable() {
   const handleDragEnd = useCallback(async (e: DragEndEvent) => {
     setActiveDrag(null);
     if (!e.over) return;
-    const [day, timeStr] = String(e.over.id).split("|");
+    // Week-view cells are "day|minutes"; day-view cells add "|roomId".
+    const [day, timeStr, roomId] = String(e.over.id).split("|");
     const timeMin = parseInt(timeStr, 10);
     const src = e.active.data.current;
     if (src?.placement) {
       const p: Placement = src.placement;
       const newStart = toHHMM(timeMin);
-      if (p.day === day && p.start === newStart) return;
-      await upsertPlacement({ ...p, day, start: newStart });
+      const newRoom = roomId ?? p.room;
+      if (p.day === day && p.start === newStart && p.room === newRoom) return;
+      await upsertPlacement({ ...p, day, start: newStart, room: newRoom });
     } else if (src?.unscheduled) {
       const { courseCode, section, kind, index } = src.unscheduled;
       setInspector({ courseCode, section, kind, index, day, startStr: toHHMM(timeMin) });
@@ -692,22 +905,22 @@ export default function Timetable() {
   }, [upsertPlacement]);
 
   const handleValidate = useCallback(async () => {
-    if (!dataset) return;
+    if (!engineDataset) return;
     setValidating(true);
     try {
-      const res = await apiValidate(placements, dataset);
+      const res = await apiValidate(placements, engineDataset);
       setValidation(res);
     } finally {
       setValidating(false);
     }
-  }, [placements, dataset, setValidation]);
+  }, [placements, engineDataset, setValidation]);
 
   const handleGenerate = useCallback(async () => {
-    if (!dataset || generating) return;
+    if (!engineDataset || generating) return;
     setGenerating(true);
     setGenError(null);
     try {
-      const res = await apiGenerate(dataset);
+      const res = await apiGenerate(engineDataset);
       if (res.error) setGenError(res.error);
       else setGenOptions(res.options);
     } catch (e) {
@@ -715,7 +928,7 @@ export default function Timetable() {
     } finally {
       setGenerating(false);
     }
-  }, [dataset, generating]);
+  }, [engineDataset, generating]);
 
   const handleApplyOption = useCallback((opt: GenerateOption) => {
     applyDraft(opt.placements);
@@ -734,10 +947,13 @@ export default function Timetable() {
   }, [inspector, upsertPlacement]);
 
   const scheduled = useMemo(() => new Set(placements.map(mkKey)), [placements]);
-  const unscheduled = useMemo(() => {
-    if (!dataset) return [];
-    const items: InspectorTarget[] = [];
-    for (const c of dataset.courses) {
+
+  // Pending meetings grouped per course so the tray reads as a course
+  // list ("CS415 — Software Engineering"), not a wall of identical chips.
+  const unscheduledGroups = useMemo(() => {
+    const groups: { code: string; title: string; sessionCount: Record<string, number>; items: InspectorTarget[] }[] = [];
+    for (const c of semesterCourses) {
+      const items: InspectorTarget[] = [];
       for (const [kind, count] of Object.entries(c.sessions)) {
         for (let idx = 0; idx < (count as number); idx++) {
           for (let sec = 1; sec <= c.sections; sec++) {
@@ -747,9 +963,14 @@ export default function Timetable() {
           }
         }
       }
+      if (items.length) groups.push({ code: c.code, title: c.title, sessionCount: c.sessions, items });
     }
-    return items;
-  }, [dataset, scheduled]);
+    return groups;
+  }, [semesterCourses, scheduled]);
+  const unscheduledCount = useMemo(
+    () => unscheduledGroups.reduce((s, g) => s + g.items.length, 0),
+    [unscheduledGroups],
+  );
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -763,6 +984,19 @@ export default function Timetable() {
             violations={validation?.violations.length}
             score={validation?.score}
           />
+          <button
+            onClick={() => setAvailOpen(true)}
+            disabled={!dataset}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            <ListChecks className="h-3.5 w-3.5" />
+            This semester
+            {activeCourses && (
+              <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] tabular-nums">
+                {semesterCourses.length}
+              </span>
+            )}
+          </button>
           <button
             onClick={handleValidate}
             disabled={validating || !dataset}
@@ -807,6 +1041,40 @@ export default function Timetable() {
 
       {/* filter bar */}
       <div className="shrink-0 px-4 sm:px-6 py-2 border-b border-border bg-background flex items-center gap-2 flex-wrap">
+        {/* view mode */}
+        <div className="flex rounded-lg border border-border overflow-hidden bg-card text-xs">
+          <button
+            onClick={() => setView("week")}
+            className={cn("flex items-center gap-1.5 px-2.5 py-1.5 transition-colors",
+              view === "week" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" /> Week
+          </button>
+          <button
+            onClick={() => setView("day")}
+            className={cn("flex items-center gap-1.5 px-2.5 py-1.5 transition-colors",
+              view === "day" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+          >
+            <Columns3 className="h-3.5 w-3.5" /> By room
+          </button>
+        </div>
+
+        {view === "day" && (
+          <div className="flex rounded-lg border border-border overflow-hidden bg-card text-xs">
+            {days.map(d => (
+              <button
+                key={d}
+                onClick={() => setDayFocus(d)}
+                className={cn("px-2.5 py-1.5 transition-colors",
+                  dayFocus === d ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="w-px h-4 bg-border/60 mx-1" />
         <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">View by</span>
 
         {/* primary focus filters */}
@@ -910,7 +1178,7 @@ export default function Timetable() {
           {/* unscheduled tray */}
           <div className={cn(
             "shrink-0 border-r border-border bg-background flex flex-col transition-all duration-200 overflow-hidden",
-            trayOpen ? "w-44" : "w-9",
+            trayOpen ? "w-60" : "w-9",
           )}>
             <button
               onClick={() => setTrayOpen(v => !v)}
@@ -919,25 +1187,40 @@ export default function Timetable() {
               {trayOpen
                 ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                 : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-              {trayOpen && <span className="truncate">Unscheduled ({unscheduled.length})</span>}
+              {trayOpen && <span className="truncate">Unscheduled ({unscheduledCount})</span>}
             </button>
             {trayOpen && (
-              <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-                {!unscheduled.length
+              <div className="flex-1 overflow-y-auto p-2 space-y-3">
+                {!unscheduledGroups.length
                   ? <div className="pt-4 flex flex-col items-center gap-1.5 text-center px-2">
                       <CheckCheck className="h-4 w-4 text-success/60" />
-                      <p className="text-[10px] text-muted-foreground leading-snug">All classes scheduled</p>
+                      <p className="text-[10px] text-muted-foreground leading-snug">
+                        {semesterCourses.length
+                          ? "All classes scheduled"
+                          : "No courses selected for this semester yet"}
+                      </p>
                     </div>
-                  : unscheduled.map(u => (
-                      <UnscheduledItem
-                        key={`${u.courseCode}|${u.section}|${u.kind}|${u.index}`}
-                        courseCode={u.courseCode}
-                        section={u.section}
-                        kind={u.kind}
-                        index={u.index}
-                        cohort={multiSection.has(u.courseCode) ? cohortLetter(u.section) : undefined}
-                        onClick={() => setInspector(u)}
-                      />
+                  : unscheduledGroups.map(g => (
+                      <div key={g.code} className="space-y-1">
+                        <div className="px-1">
+                          <div className="text-[11px] font-mono text-primary leading-tight">{g.code}</div>
+                          <div className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{g.title}</div>
+                        </div>
+                        <div className="space-y-1">
+                          {g.items.map(u => (
+                            <UnscheduledItem
+                              key={`${u.courseCode}|${u.section}|${u.kind}|${u.index}`}
+                              courseCode={u.courseCode}
+                              section={u.section}
+                              kind={u.kind}
+                              index={u.index}
+                              cohort={multiSection.has(u.courseCode) ? cohortLetter(u.section) : undefined}
+                              meetingNo={(g.sessionCount[u.kind] ?? 1) > 1 ? u.index + 1 : undefined}
+                              onClick={() => setInspector(u)}
+                            />
+                          ))}
+                        </div>
+                      </div>
                     ))}
               </div>
             )}
@@ -945,78 +1228,165 @@ export default function Timetable() {
 
           {/* grid */}
           <div className="flex-1 overflow-auto">
-            <div className="min-w-max">
-              <div className="flex border-b border-border sticky top-0 bg-background z-10">
-                <div className="w-14 shrink-0" />
-                {days.map(d => (
-                  <div key={d} style={{ width: COL_W }}
-                    className="shrink-0 px-3 py-2.5 text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 border-r border-border last:border-r-0">
-                    {DAY_LABEL[d] ?? d}
-                  </div>
-                ))}
-              </div>
-              <div className="flex">
-                {/* time gutter: labels on the hour */}
-                <div className="w-14 shrink-0 sticky left-0 bg-background z-10 border-r border-border/30">
-                  {times.map(t => (
-                    <div
-                      key={t}
-                      style={{ height: ROW_H }}
-                      className={cn(
-                        "px-2 flex items-start justify-end pt-0.5 text-[10px] font-mono text-muted-foreground/70 border-t",
-                        t % 60 === 0 ? "border-border/30" : "border-border/10",
-                      )}
-                    >
-                      {t % 60 === 0 ? toHHMM(t) : ""}
+            {view === "week" ? (
+              <div className="min-w-max">
+                <div className="flex border-b border-border sticky top-0 bg-background z-10">
+                  <div className="w-14 shrink-0" />
+                  {days.map(d => (
+                    <div key={d} style={{ width: COL_W }}
+                      className="shrink-0 px-3 py-2.5 text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 border-r border-border last:border-r-0">
+                      {DAY_LABEL[d] ?? d}
                     </div>
                   ))}
                 </div>
-                {/* one continuous column per day; chips sit at their exact minute */}
-                {days.map(day => (
-                  <div
-                    key={day}
-                    style={{ width: COL_W, height: times.length * ROW_H }}
-                    className="relative shrink-0 border-r border-border/30 last:border-r-0"
-                  >
-                    {times.map((t, i) => (
-                      <DropCell key={t} day={day} timeMin={t} top={i * ROW_H} hour={t % 60 === 0} />
-                    ))}
-                    {slots.filter(s => s.placement.day === day).map(s => (
-                      <PlacementChip
-                        key={mkKey(s.placement)}
-                        placement={s.placement}
-                        lane={s.lane}
-                        lanes={s.lanes}
-                        top={((toMin(s.placement.start) - times[0]) / SLOT_MIN) * ROW_H}
-                        duration={durations[s.placement.kind]}
-                        cohort={multiSection.has(s.placement.course) ? cohortLetter(s.placement.section) : undefined}
-                        facultyName={facultyOf.get(s.placement.faculty)}
-                        flagged={flagged.has(mkKey(s.placement))}
-                        onClick={() => setInspector({
-                          courseCode: s.placement.course,
-                          section: s.placement.section,
-                          kind: s.placement.kind,
-                          index: s.placement.index,
-                          day: s.placement.day,
-                          startStr: s.placement.start,
-                        })}
-                      />
+                <div className="flex">
+                  {/* time gutter: labels on the hour */}
+                  <div className="w-14 shrink-0 sticky left-0 bg-background z-10 border-r border-border/30">
+                    {times.map(t => (
+                      <div
+                        key={t}
+                        style={{ height: ROW_H }}
+                        className={cn(
+                          "px-2 flex items-start justify-end pt-0.5 text-[10px] font-mono text-muted-foreground/70 border-t",
+                          t % 60 === 0 ? "border-border/30" : "border-border/10",
+                        )}
+                      >
+                        {t % 60 === 0 ? toHHMM(t) : ""}
+                      </div>
                     ))}
                   </div>
-                ))}
+                  {/* one continuous column per day; chips sit at their exact minute */}
+                  {days.map(day => (
+                    <div
+                      key={day}
+                      style={{ width: COL_W, height: times.length * ROW_H }}
+                      className="relative shrink-0 border-r border-border/30 last:border-r-0"
+                    >
+                      {times.map((t, i) => (
+                        <DropCell key={t} day={day} timeMin={t} top={i * ROW_H} hour={t % 60 === 0} />
+                      ))}
+                      {slots.filter(s => s.placement.day === day).map(s => (
+                        <PlacementChip
+                          key={mkKey(s.placement)}
+                          placement={s.placement}
+                          lane={s.lane}
+                          lanes={s.lanes}
+                          top={((toMin(s.placement.start) - times[0]) / SLOT_MIN) * ROW_H}
+                          duration={durations[s.placement.kind]}
+                          cohort={multiSection.has(s.placement.course) ? cohortLetter(s.placement.section) : undefined}
+                          facultyName={facultyOf.get(s.placement.faculty)}
+                          roomName={roomOf.get(s.placement.room)}
+                          flagged={flagged.has(mkKey(s.placement))}
+                          onClick={() => setInspector({
+                            courseCode: s.placement.course,
+                            section: s.placement.section,
+                            kind: s.placement.kind,
+                            index: s.placement.index,
+                            day: s.placement.day,
+                            startStr: s.placement.start,
+                          })}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              /* by-room view: one column per classroom for the focused day,
+                 so ten rooms all teaching at 08:00 read as ten side-by-side
+                 chips instead of one unreadable pile */
+              <div className="min-w-max">
+                <div className="flex border-b border-border sticky top-0 bg-background z-10">
+                  <div className="w-14 shrink-0" />
+                  {semesterRooms.map(r => (
+                    <div key={r.id} style={{ width: COL_W }}
+                      className="shrink-0 px-3 py-2 border-r border-border last:border-r-0">
+                      <div className="text-[11px] text-foreground truncate">{r.name}</div>
+                      <div className="text-[9px] text-muted-foreground/60">{r.capacity} seats · {r.type.replace(/_/g, " ")}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex">
+                  <div className="w-14 shrink-0 sticky left-0 bg-background z-10 border-r border-border/30">
+                    {times.map(t => (
+                      <div
+                        key={t}
+                        style={{ height: ROW_H }}
+                        className={cn(
+                          "px-2 flex items-start justify-end pt-0.5 text-[10px] font-mono text-muted-foreground/70 border-t",
+                          t % 60 === 0 ? "border-border/30" : "border-border/10",
+                        )}
+                      >
+                        {t % 60 === 0 ? toHHMM(t) : ""}
+                      </div>
+                    ))}
+                  </div>
+                  {semesterRooms.map(room => {
+                    const roomSlots = layoutGrid(
+                      visiblePlacements.filter(p => p.day === dayFocus && p.room === room.id),
+                      durations,
+                    );
+                    return (
+                      <div
+                        key={room.id}
+                        style={{ width: COL_W, height: times.length * ROW_H }}
+                        className="relative shrink-0 border-r border-border/30 last:border-r-0"
+                      >
+                        {times.map((t, i) => (
+                          <DropCell key={t} day={dayFocus} timeMin={t} top={i * ROW_H} hour={t % 60 === 0} room={room.id} />
+                        ))}
+                        {roomSlots.map(s => (
+                          <PlacementChip
+                            key={mkKey(s.placement)}
+                            placement={s.placement}
+                            lane={s.lane}
+                            lanes={s.lanes}
+                            top={((toMin(s.placement.start) - times[0]) / SLOT_MIN) * ROW_H}
+                            duration={durations[s.placement.kind]}
+                            cohort={multiSection.has(s.placement.course) ? cohortLetter(s.placement.section) : undefined}
+                            facultyName={facultyOf.get(s.placement.faculty)}
+                            flagged={flagged.has(mkKey(s.placement))}
+                            onClick={() => setInspector({
+                              courseCode: s.placement.course,
+                              section: s.placement.section,
+                              kind: s.placement.kind,
+                              index: s.placement.index,
+                              day: s.placement.day,
+                              startStr: s.placement.start,
+                            })}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* inspector */}
           <Inspector
             target={inspector}
-            dataset={dataset}
+            dataset={engineDataset}
             placements={placements}
             onClose={() => setInspector(null)}
             onPlace={handlePlaceOption}
           />
         </div>
+
+        {availOpen && dataset && (
+          <AvailabilityModal
+            dataset={dataset}
+            activeCourses={activeCourses}
+            activeRooms={activeRooms}
+            onSave={(courses, rooms) => {
+              setActiveCourses(courses);
+              setActiveRooms(rooms);
+              setAvailOpen(false);
+            }}
+            onClose={() => setAvailOpen(false)}
+          />
+        )}
 
         {genOptions && (
           <GenerateModal

@@ -10,7 +10,7 @@ import Rooms from "@/pages/Rooms";
 import StudentsPage from "@/pages/Students";
 import { Toaster } from "@/components/ui/toaster";
 import { useTimetable } from "@/store/timetable";
-import { loadDataset, ensureDefaultSession, loadSessionPlacements, supabase } from "@/lib/supabase";
+import { loadDataset, loadAvailability, ensureDefaultSession, loadSessionPlacements, supabase } from "@/lib/supabase";
 import AppLoader from "@/components/AppLoader";
 
 const queryClient = new QueryClient({
@@ -19,6 +19,7 @@ const queryClient = new QueryClient({
 
 function AppInit({ onReady }: { onReady: () => void }) {
   const { setDataset, setPlacements, setSemesterId, semesterId } = useTimetable();
+  const store = useTimetable;
 
   useEffect(() => {
     let settled = false;
@@ -28,6 +29,10 @@ function AppInit({ onReady }: { onReady: () => void }) {
 
     Promise.all([
       loadDataset().then(ds => { if (ds) setDataset(ds); }),
+      loadAvailability().then(({ courses, rooms }) => {
+        // Write directly: the setters would persist right back to Supabase.
+        store.setState({ activeCourses: courses, activeRooms: rooms });
+      }),
       ensureDefaultSession().then(async id => {
         setSemesterId(id);
         if (id !== "offline") {

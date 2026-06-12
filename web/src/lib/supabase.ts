@@ -73,6 +73,24 @@ export async function loadDataset(): Promise<Dataset | null> {
   };
 }
 
+// Which courses / classrooms the registrar marked as available this
+// semester. A missing row means no selection has been made yet (= all).
+export async function loadAvailability(): Promise<{
+  courses: string[] | null;
+  rooms: string[] | null;
+}> {
+  if (!SUPABASE_CONFIGURED) return { courses: null, rooms: null };
+  const { data } = await supabase
+    .from("settings")
+    .select("*")
+    .in("key", ["active_courses", "active_rooms"]);
+  const items = (k: string) => {
+    const v = data?.find(s => s.key === k)?.value as { items?: string[] | null } | undefined;
+    return v?.items ?? null;
+  };
+  return { courses: items("active_courses"), rooms: items("active_rooms") };
+}
+
 export async function ensureDefaultSession(): Promise<string> {
   if (!SUPABASE_CONFIGURED) return "offline";
   const { data } = await supabase
