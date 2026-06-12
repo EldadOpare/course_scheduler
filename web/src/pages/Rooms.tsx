@@ -7,13 +7,15 @@ import SortIcon from "@/components/SortIcon";
 import { cn } from "@/lib/utils";
 import type { Room } from "@/types";
 
-type SortKey = "id" | "name" | "type" | "capacity" | "building";
+type SortKey = "name" | "type" | "capacity";
 
-const ROOM_TYPES = ["lecture", "lab", "computer_lab", "seminar"];
+const ROOM_TYPES = ["lecture_hall", "classroom", "lab", "computer_lab", "seminar"];
 
 const TYPE_BADGE: Record<string, string> = {
+  lecture_hall: "bg-primary/10 text-primary",
+  classroom:    "bg-primary/10 text-primary",
   lecture:      "bg-primary/10 text-primary",
-  lab:          "bg-muted text-muted-foreground",
+  lab:          "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   computer_lab: "bg-muted text-muted-foreground",
   seminar:      "bg-muted text-muted-foreground",
 };
@@ -38,11 +40,10 @@ function RoomModal({
   const set = (patch: Partial<Room>) => setForm(f => ({ ...f, ...patch }));
 
   const save = () => {
-    if (!form.id.trim()) return setError("Room ID is required.");
     if (!form.name.trim()) return setError("Name is required.");
-    if (!form.building.trim()) return setError("Building is required.");
     if (form.capacity < 1) return setError("Capacity must be at least 1.");
-    onSave({ ...form, equipment: equipInput.split(",").map(s => s.trim()).filter(Boolean) });
+    const id = form.id.trim() || form.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    onSave({ ...form, id, equipment: equipInput.split(",").map(s => s.trim()).filter(Boolean) });
   };
 
   return (
@@ -55,21 +56,12 @@ function RoomModal({
         <div className="p-5 space-y-3.5">
           {error && <p className="text-xs text-destructive">{error}</p>}
 
-          <Field label="Room ID">
-            <input
-              value={form.id}
-              onChange={e => set({ id: e.target.value })}
-              disabled={!isNew}
-              placeholder="e.g. MH-201"
-              className="field-input disabled:opacity-50"
-            />
-          </Field>
-
           <Field label="Name">
             <input
               value={form.name}
-              onChange={e => set({ name: e.target.value })}
-              placeholder="e.g. Main Hall 201"
+              onChange={e => set({ name: e.target.value, id: isNew ? e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") : form.id })}
+              placeholder="e.g. Nutor 100"
+              autoFocus
               className="field-input"
             />
           </Field>
@@ -139,7 +131,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 export default function Rooms() {
   const { dataset, upsertRoom, removeRoom } = useTimetable();
-  const [sort, setSort] = useState<SortKey>("id");
+  const [sort, setSort] = useState<SortKey>("name");
   const [asc, setAsc] = useState(true);
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<{ room: Room; isNew: boolean } | null>(null);
@@ -148,18 +140,15 @@ export default function Rooms() {
   const rooms = dataset?.rooms ?? [];
 
   const filtered = rooms.filter(
-    r => r.id.toLowerCase().includes(search.toLowerCase())
-      || r.name.toLowerCase().includes(search.toLowerCase())
-      || r.building.toLowerCase().includes(search.toLowerCase()),
+    r => r.name.toLowerCase().includes(search.toLowerCase())
+      || r.type.toLowerCase().includes(search.toLowerCase()),
   );
 
   const sorted = [...filtered].sort((a, b) => {
     let av: string | number = 0, bv: string | number = 0;
-    if (sort === "id")       { av = a.id;       bv = b.id; }
-    else if (sort === "name")     { av = a.name;     bv = b.name; }
+    if (sort === "name")          { av = a.name;     bv = b.name; }
     else if (sort === "type")     { av = a.type;     bv = b.type; }
     else if (sort === "capacity") { av = a.capacity; bv = b.capacity; }
-    else if (sort === "building") { av = a.building; bv = b.building; }
     if (typeof av === "string") return asc ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
     return asc ? (av as number) - (bv as number) : (bv as number) - (av as number);
   });
@@ -176,7 +165,7 @@ export default function Rooms() {
 
   const stats = [
     { label: "Total classrooms", value: rooms.length },
-    { label: "Lecture halls",    value: rooms.filter(r => r.type === "lecture").length },
+    { label: "Lecture halls",    value: rooms.filter(r => r.type === "lecture_hall" || r.type === "lecture").length },
     { label: "Labs",             value: rooms.filter(r => r.type === "lab" || r.type === "computer_lab").length },
     { label: "Avg capacity",     value: rooms.length ? Math.round(rooms.reduce((s, r) => s + r.capacity, 0) / rooms.length) : 0 },
   ];
@@ -216,7 +205,7 @@ export default function Rooms() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by ID, name or building..."
+              placeholder="Search by name or type..."
               className="flex-1 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
             />
             {search && (
@@ -235,11 +224,9 @@ export default function Rooms() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border">
-                  <th className={thCls("id")}       onClick={() => toggle("id")}>ID <SortIcon active={sort==="id"} asc={asc} /></th>
                   <th className={thCls("name")}     onClick={() => toggle("name")}>Name <SortIcon active={sort==="name"} asc={asc} /></th>
                   <th className={thCls("type")}     onClick={() => toggle("type")}>Type <SortIcon active={sort==="type"} asc={asc} /></th>
                   <th className={thCls("capacity")} onClick={() => toggle("capacity")}>Capacity <SortIcon active={sort==="capacity"} asc={asc} /></th>
-                  <th className={thCls("building")} onClick={() => toggle("building")}>Building <SortIcon active={sort==="building"} asc={asc} /></th>
                   <th className="text-left px-4 py-3 text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 whitespace-nowrap">Equipment</th>
                   <th className="px-4 py-3 w-16" />
                 </tr>
@@ -247,7 +234,7 @@ export default function Rooms() {
               <tbody>
                 {!sorted.length && (
                   <tr>
-                    <td colSpan={7}>
+                    <td colSpan={5}>
                       {search
                         ? <EmptyState icon={Search} title="No classrooms match your search" description="Try a different name, ID, or building." compact />
                         : <EmptyState icon={School} title="No classrooms added yet" description="Add lecture halls, labs, and seminar rooms. Capacity and equipment are used to match rooms to courses automatically." compact />
@@ -257,7 +244,6 @@ export default function Rooms() {
                 )}
                 {sorted.map((r, i) => (
                   <tr key={r.id} className={cn("border-b border-border/50 hover:bg-muted/30 transition-colors group", i % 2 !== 0 && "bg-muted/10")}>
-                    <td className="px-4 py-3 font-mono text-primary">{r.id}</td>
                     <td className="px-4 py-3 text-foreground">{r.name}</td>
                     <td className="px-4 py-3">
                       <span className={cn("text-[10px] tracking-[0.04em] px-2 py-0.5 rounded-full", TYPE_BADGE[r.type] ?? "bg-muted text-muted-foreground")}>
@@ -265,7 +251,6 @@ export default function Rooms() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center text-muted-foreground">{r.capacity}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{r.building}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         {r.equipment.length

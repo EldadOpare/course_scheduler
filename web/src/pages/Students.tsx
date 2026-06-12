@@ -209,7 +209,7 @@ function YearGroupsTab() {
             {visible.map((yg, i) => (
               <tr key={yg.id} className={cn("group border-b border-border/50 hover:bg-muted/30 transition-colors", i % 2 !== 0 && "bg-muted/10")}>
                 <td className="px-4 py-3">
-                  <span className="inline-flex w-7 h-7 rounded-lg bg-primary/8 border border-primary/15 text-primary items-center justify-center text-xs">{yg.year}</span>
+                  <span className="inline-flex px-2.5 h-7 rounded-lg bg-primary/8 border border-primary/15 text-primary items-center justify-center text-xs font-mono tabular-nums">{yg.year}</span>
                 </td>
                 <td className="px-4 py-3 text-foreground">{yg.label}</td>
                 <td className="px-4 py-3 text-muted-foreground capitalize">{yg.intake}</td>
@@ -229,7 +229,6 @@ function YearGroupsTab() {
       {editing !== null && (
         <ModalShell
           title={isNew ? "Add year group" : "Edit year group"}
-          sub={isNew ? undefined : draft.id}
           onClose={() => setEditing(null)}
           footer={
             <ModalActions
@@ -366,7 +365,6 @@ function MajorsTab() {
                   <tr key={m.id} className={cn("group border-b border-border/50 hover:bg-muted/30 transition-colors", i % 2 !== 0 && "bg-muted/10")}>
                     <td className="px-4 py-3">
                       <div className="text-xs text-foreground">{m.name}</div>
-                      <div className="text-[10px] font-mono text-muted-foreground/60">{m.id}</div>
                     </td>
                     {YEARS.map(y => (
                       <td key={y} className="px-4 py-3 text-center text-muted-foreground tabular-nums">
@@ -391,7 +389,6 @@ function MajorsTab() {
       {editing !== null && (
         <ModalShell
           title={isNew ? "Add major" : "Edit major"}
-          sub={isNew ? undefined : draft.id}
           onClose={() => setEditing(null)}
           footer={
             <ModalActions
@@ -409,10 +406,6 @@ function MajorsTab() {
               <input value={draft.name}
                 onChange={e => setDraft({ ...draft, name: e.target.value, id: isNew ? slugify(e.target.value) : draft.id })}
                 placeholder="Computer Science" autoFocus className={inputCls} />
-            </Field>
-            <Field label="ID">
-              <input value={draft.id} onChange={e => setDraft({ ...draft, id: e.target.value })}
-                placeholder="cs" className={cn(inputCls, "font-mono")} />
             </Field>
           </section>
           <section className="space-y-3">
