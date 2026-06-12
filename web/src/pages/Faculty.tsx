@@ -28,7 +28,7 @@ const EMPTY_FACULTY: Faculty = {
   approved_courses: [], availability: [], preferred_times: [],
 };
 
-type SortKey = "name" | "type" | "load" | "courses";
+type SortKey = "name" | "type" | "courses";
 
 function initials(name: string) {
   const cleaned = name.replace(/^(Dr\.|Prof\.|Mr\.|Mrs\.|Ms\.)\s*/i, "").trim();
@@ -166,9 +166,8 @@ function FacultyCard({ faculty, courseMap, onEdit }: {
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm text-foreground truncate">{faculty.name}</div>
-          <div className="flex items-center gap-1.5 mt-0.5">
+          <div className="mt-0.5">
             <TypeBadge type={faculty.type} />
-            <span className="text-[10px] font-mono text-muted-foreground/60">{faculty.id}</span>
           </div>
         </div>
         <button
@@ -177,11 +176,6 @@ function FacultyCard({ faculty, courseMap, onEdit }: {
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
-      </div>
-
-      <div className="text-xs text-muted-foreground">
-        <span className="text-foreground">{faculty.load_target} cr</span> target
-        &ensp;·&ensp;<span className="text-foreground">{faculty.load_target + (faculty.max_overload ?? 2)} cr</span> max
       </div>
 
       {faculty.approved_courses.length > 0 && (
@@ -239,10 +233,7 @@ function EditModal({ draft, setDraft, courseCodes, isNew, onSave, onDelete, onCl
       <div className="relative z-10 w-full max-w-[520px] max-h-[90vh] bg-background border border-border rounded-2xl shadow-2xl flex flex-col">
 
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
-          <div>
-            <h2 className="text-sm text-foreground">{isNew ? "Add faculty member" : "Edit faculty member"}</h2>
-            {!isNew && <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">{draft.id}</p>}
-          </div>
+          <h2 className="text-sm text-foreground">{isNew ? "Add faculty member" : "Edit faculty member"}</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
             <X className="h-4 w-4" />
           </button>
@@ -265,9 +256,6 @@ function EditModal({ draft, setDraft, courseCodes, isNew, onSave, onDelete, onCl
                   className={inputCls}
                 />
               </Field>
-              <Field label="Faculty ID">
-                <input value={draft.id} onChange={e => set("id", e.target.value)} placeholder="fac_mensah" className={cn(inputCls, "font-mono")} />
-              </Field>
               <Field label="Type">
                 <div className="flex gap-2">
                   {(["full_time", "adjunct"] as const).map(t => (
@@ -286,20 +274,6 @@ function EditModal({ draft, setDraft, courseCodes, isNew, onSave, onDelete, onCl
                     </button>
                   ))}
                 </div>
-              </Field>
-            </div>
-          </section>
-
-          <section className="space-y-3">
-            <SectionLabel>Credit load</SectionLabel>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Target (credits)">
-                <input type="number" min={0} max={20} value={draft.load_target}
-                  onChange={e => set("load_target", Number(e.target.value))} className={inputCls} />
-              </Field>
-              <Field label="Max overload">
-                <input type="number" min={0} max={10} value={draft.max_overload}
-                  onChange={e => set("max_overload", Number(e.target.value))} className={inputCls} />
               </Field>
             </div>
           </section>
@@ -446,10 +420,9 @@ export default function FacultyPage() {
     );
     return [...filtered].sort((a, b) => {
       let av: string | number, bv: string | number;
-      if (sortKey === "name")    { av = a.name;                      bv = b.name; }
-      else if (sortKey === "type")    { av = a.type;                      bv = b.type; }
-      else if (sortKey === "load")    { av = a.load_target;               bv = b.load_target; }
-      else                            { av = a.approved_courses.length;   bv = b.approved_courses.length; }
+      if (sortKey === "name")    { av = a.name;                    bv = b.name; }
+      else if (sortKey === "type")    { av = a.type;                    bv = b.type; }
+      else                            { av = a.approved_courses.length; bv = b.approved_courses.length; }
       if (typeof av === "string") return sortAsc ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
       return sortAsc ? (av - (bv as number)) : ((bv as number) - av);
     });
@@ -471,12 +444,7 @@ export default function FacultyPage() {
     { label: "Total", value: faculty.length },
     { label: "Full-time", value: faculty.filter(f => f.type === "full_time").length },
     { label: "Adjuncts", value: faculty.filter(f => f.type === "adjunct").length },
-    {
-      label: "Avg load",
-      value: faculty.length
-        ? `${(faculty.reduce((s, f) => s + f.load_target, 0) / faculty.length).toFixed(1)} cr`
-        : "—",
-    },
+    { label: "With courses", value: faculty.filter(f => f.approved_courses.length > 0).length },
   ];
 
   const thCls = (key: SortKey) => cn(
@@ -504,7 +472,6 @@ export default function FacultyPage() {
           }
         />
 
-        {/* stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {stats.map((s, i) => (
             <div key={s.label} className="animate-fade-up bg-card border border-border rounded-xl px-4 py-3.5" style={{ animationDelay: `${i * 55}ms` }}>
@@ -514,13 +481,12 @@ export default function FacultyPage() {
           ))}
         </div>
 
-        {/* toolbar */}
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex-1 min-w-48 flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card">
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name, ID or course..."
+              placeholder="Search by name or course..."
               className="flex-1 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
             />
             {search && (
@@ -561,12 +527,11 @@ export default function FacultyPage() {
           <span className="text-xs text-muted-foreground tabular-nums">{visible.length} / {faculty.length}</span>
         </div>
 
-        {/* content */}
         {!faculty.length ? (
           <EmptyState
             icon={Users}
             title="No lecturers added yet"
-            description="Add your lecturers here. Each one can have approved courses, availability windows, and a teaching load — all used when generating the timetable."
+            description="Add your lecturers here. Each one can have approved courses and availability windows — used when generating the timetable."
           />
         ) : !visible.length ? (
           <EmptyState
@@ -593,9 +558,6 @@ export default function FacultyPage() {
                     </th>
                     <th className={thCls("type")} onClick={() => toggleSort("type")}>
                       Type <SortIcon active={sortKey === "type"} asc={sortAsc} />
-                    </th>
-                    <th className={thCls("load")} onClick={() => toggleSort("load")}>
-                      Load <SortIcon active={sortKey === "load"} asc={sortAsc} />
                     </th>
                     <th className={thCls("courses")} onClick={() => toggleSort("courses")}>
                       Courses <SortIcon active={sortKey === "courses"} asc={sortAsc} />
@@ -628,18 +590,11 @@ export default function FacultyPage() {
                             )}>
                               {initials(f.name)}
                             </div>
-                            <div>
-                              <div className="text-xs text-foreground">{f.name}</div>
-                              <div className="text-[10px] font-mono text-muted-foreground/60">{f.id}</div>
-                            </div>
+                            <span className="text-xs text-foreground">{f.name}</span>
                           </div>
                         </td>
                         <td className="px-4 py-3">
                           <TypeBadge type={f.type} />
-                        </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                          <span className="text-foreground">{f.load_target}</span> cr
-                          &ensp;·&ensp;<span className="text-foreground">{f.load_target + (f.max_overload ?? 2)}</span> max
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
