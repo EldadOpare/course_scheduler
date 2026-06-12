@@ -1,0 +1,46 @@
+[
+  {
+    "id": "r_jh1",
+    "name": "Jackson Hall 115",
+    "type": "lecture_room",
+    "capacity": 90,
+    "building": "Jackson Hall"
+  },
+  {
+    "id": "r_jh2",
+    "name": "Jackson Hall 116",
+    "type": "lecture_room",
+    "capacity": 60,
+    "building": "Jackson Hall"
+  },
+  {
+    "id": "r_nm1",
+    "name": "Norton-Motulsky 207",
+    "type": "lecture_room",
+    "capacity": 45,
+    "building": "Norton-Motulsky"
+  },
+  {
+    "id": "r_nm2",
+    "name": "Norton-Motulsky 208",
+    "type": "lecture_room",
+    "capacity": 40,
+    "building": "Norton-Motulsky"
+  },
+  {
+    "id": "r_cslab",
+    "name": "Computer Lab A",
+    "type": "computer_lab",
+    "capacity": 35,
+    "equipment": ["workstations", "projector"],
+    "building": "Norton-Motulsky"
+  },
+  {
+    "id": "r_englab",
+    "name": "Engineering Lab",
+    "type": "engineering_lab",
+    "capacity": 30,
+    "equipment": ["benches", "oscilloscopes"],
+    "building": "Engineering Workshop"
+  }
+]

@@ -1,0 +1,82 @@
+[
+  {
+    "code": "MATH121",
+    "title": "College Algebra",
+    "type": "core",
+    "level": 1,
+    "expected_enrollment": 40,
+    "sections": 2,
+    "sessions": {"lecture": 2, "discussion": 1}
+  },
+  {
+    "code": "ENGL112",
+    "title": "Written and Oral Communication",
+    "type": "core",
+    "level": 1,
+    "expected_enrollment": 35,
+    "sections": 2,
+    "sessions": {"lecture": 2}
+  },
+  {
+    "code": "BUSA161",
+    "title": "Foundations of Design and Entrepreneurship",
+    "type": "core",
+    "level": 1,
+    "expected_enrollment": 40,
+    "sections": 2,
+    "sessions": {"lecture": 2}
+  },
+  {
+    "code": "CS212",
+    "title": "Computer Programming for CS",
+    "type": "major_core",
+    "level": 2,
+    "majors": ["CS", "MIS"],
+    "prerequisites": ["CS111"],
+    "expected_enrollment": 30,
+    "sections": 1,
+    "sessions": {"lecture": 2, "lab": 1},
+    "requires_room_type": "computer_lab"
+  },
+  {
+    "code": "ENGR212",
+    "title": "Circuits and Electronics",
+    "type": "major_core",
+    "level": 2,
+    "majors": ["EE"],
+    "prerequisites": ["ENGR112"],
+    "expected_enrollment": 25,
+    "sections": 1,
+    "sessions": {"lecture": 2, "lab": 1},
+    "requires_room_type": "engineering_lab"
+  },
+  {
+    "code": "STAT221",
+    "title": "Statistics with Probability",
+    "type": "major_core",
+    "level": 2,
+    "majors": ["CS", "MIS", "BA"],
+    "expected_enrollment": 35,
+    "sections": 1,
+    "sessions": {"lecture": 2, "discussion": 1}
+  },
+  {
+    "code": "ECON101",
+    "title": "Principles of Microeconomics",
+    "type": "elective",
+    "level": 2,
+    "expected_enrollment": 30,
+    "sections": 1,
+    "sessions": {"lecture": 2}
+  },
+  {
+    "code": "MBA651",
+    "title": "Strategic Management",
+    "type": "core",
+    "program": "mba",
+    "level": 5,
+    "expected_enrollment": 25,
+    "sections": 1,
+    "sessions": {"lecture": 1}
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "course": "MATH121",
+    "section": 1,
+    "kind": "lecture",
+    "index": 0,
+    "day": "Mon",
+    "start": "08:00",
+    "room": "r_jh1",
+    "faculty": "f_ayesi"
+  },
+  {
+    "course": "STAT221",
+    "section": 1,
+    "kind": "lecture",
+    "index": 0,
+    "day": "Mon",
+    "start": "08:00",
+    "room": "r_nm1",
+    "faculty": "f_ayesi"
+  },
+  {
+    "course": "CS212",
+    "section": 1,
+    "kind": "lab",
+    "index": 0,
+    "day": "Wed",
+    "start": "11:30",
+    "room": "r_nm2",
+    "faculty": "f_owusu"
+  },
+  {
+    "course": "ENGL112",
+    "section": 1,
+    "kind": "lecture",
+    "index": 0,
+    "day": "Fri",
+    "start": "08:00",
+    "room": "r_nm2",
+    "faculty": "f_lartey"
+  },
+  {
+    "course": "BUSA161",
+    "section": 1,
+    "kind": "lecture",
+    "index": 0,
+    "day": "Mon",
+    "start": "09:45",
+    "room": "r_jh1",
+    "faculty": "f_addo"
+  },
+  {
+    "course": "ECON101",
+    "section": 1,
+    "kind": "lecture",
+    "index": 0,
+    "day": "Mon",
+    "start": "13:15",
+    "room": "r_jh1",
+    "faculty": "f_addo"
+  }
+]

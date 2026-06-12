@@ -1,0 +1,70 @@
+[
+  {
+    "id": "f_ayesi",
+    "name": "Dr. Esi Ayesi",
+    "type": "full_time",
+    "load_target": 4,
+    "approved_courses": ["MATH121", "STAT221"],
+    "preferred_times": [
+      {"day": "Mon", "start": "08:00", "end": "13:00"},
+      {"day": "Tue", "start": "08:00", "end": "13:00"},
+      {"day": "Wed", "start": "08:00", "end": "13:00"},
+      {"day": "Thu", "start": "08:00", "end": "13:00"},
+      {"day": "Fri", "start": "08:00", "end": "13:00"}
+    ]
+  },
+  {
+    "id": "f_mensah",
+    "name": "Dr. Kwame Mensah",
+    "type": "full_time",
+    "load_target": 4,
+    "approved_courses": ["MATH121", "ENGL112", "STAT221"]
+  },
+  {
+    "id": "f_owusu",
+    "name": "Dr. Akosua Owusu",
+    "type": "full_time",
+    "load_target": 4,
+    "approved_courses": ["CS212", "STAT221"]
+  },
+  {
+    "id": "f_boateng",
+    "name": "Dr. Yaw Boateng",
+    "type": "full_time",
+    "load_target": 4,
+    "approved_courses": ["ENGR212"],
+    "preferred_times": [
+      {"day": "Mon", "start": "08:00", "end": "13:00"},
+      {"day": "Wed", "start": "08:00", "end": "13:00"}
+    ]
+  },
+  {
+    "id": "f_addo",
+    "name": "Prof. Ama Addo",
+    "type": "full_time",
+    "load_target": 4,
+    "approved_courses": ["BUSA161", "ECON101"]
+  },
+  {
+    "id": "f_lartey",
+    "name": "Mr. Selorm Lartey",
+    "type": "adjunct",
+    "load_target": 2,
+    "approved_courses": ["ENGL112"],
+    "availability": [
+      {"day": "Tue", "start": "08:00", "end": "13:00"},
+      {"day": "Thu", "start": "08:00", "end": "13:00"}
+    ]
+  },
+  {
+    "id": "f_quartey",
+    "name": "Dr. Naa Quartey",
+    "type": "adjunct",
+    "load_target": 2,
+    "approved_courses": ["MBA651"],
+    "availability": [
+      {"day": "Sat", "start": "08:00", "end": "16:00"},
+      {"day": "Sun", "start": "08:00", "end": "16:00"}
+    ]
+  }
+]
