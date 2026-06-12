@@ -1,10 +1,17 @@
 import sys
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent)]
 
-from _lib import make_handler
+from _lib import handle_post, method_not_allowed
 from timetabler import web
 
-handler = make_handler(post=web.explain_payload)
+
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        handle_post(self, web.explain_payload)
+
+    def do_GET(self):
+        method_not_allowed(self)

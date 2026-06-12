@@ -1,0 +1,2 @@
+# Python stdlib only — no external dependencies.
+# This file exists so Vercel detects the Python runtime for api/*.py.
