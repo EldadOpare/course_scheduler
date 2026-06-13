@@ -8,7 +8,7 @@ import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import {
   CalendarDays, ChevronDown, ChevronRight, X, Loader2, Search, Check,
   Wand2, Download, CheckCircle2, AlertTriangle, Bookmark, FilterX, Trash2, CheckCheck,
-  ListChecks, LayoutGrid, Columns3,
+  ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import {
@@ -641,17 +641,31 @@ function AvailabilityModal({
   dataset, activeCourses, activeRooms, onSave, onClose,
 }: {
   dataset: Dataset;
-  activeCourses: string[] | null;
+  activeCourses: Record<string, number> | null;
   activeRooms: string[] | null;
-  onSave: (courses: string[], rooms: string[]) => void;
+  onSave: (courses: Record<string, number>, rooms: string[]) => void;
   onClose: () => void;
 }) {
+  // Start from whatever is already picked. Nothing picked → empty, so the
+  // registrar deliberately chooses which courses run this semester.
   const [courseSel, setCourseSel] = useState<Set<string>>(
-    () => new Set(activeCourses ?? dataset.courses.map(c => c.code)),
+    () => new Set(Object.keys(activeCourses ?? {})),
   );
   const [roomSel, setRoomSel] = useState<Set<string>>(
     () => new Set(activeRooms ?? dataset.rooms.map(r => r.id)),
   );
+
+  const save = () => {
+    // Keep any cohort counts already chosen; new picks default to the
+    // course's catalogue section count (cohorts are fine-tuned in the tray).
+    const out: Record<string, number> = {};
+    for (const code of courseSel) {
+      out[code] = activeCourses?.[code]
+        ?? dataset.courses.find(c => c.code === code)?.sections
+        ?? 1;
+    }
+    onSave(out, [...roomSel]);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -662,7 +676,7 @@ function AvailabilityModal({
             <h2 className="text-sm text-foreground">This semester</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Pick the courses running this semester and the classrooms available for scheduling.
-              Generate and the unscheduled list only use what's ticked here.
+              The unscheduled tray and Generate only use what's ticked here — set cohorts per course in the tray afterwards.
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -702,7 +716,7 @@ function AvailabilityModal({
               Cancel
             </button>
             <button
-              onClick={() => onSave([...courseSel], [...roomSel])}
+              onClick={save}
               className="px-4 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
               Save selection
@@ -716,7 +730,7 @@ function AvailabilityModal({
 
 export default function Timetable() {
   const {
-    placements, dataset, validation, upsertPlacement, applyDraft, setValidation,
+    placements, dataset, validation, upsertPlacement, removePlacement, applyDraft, setValidation,
     activeCourses, activeRooms, setActiveCourses, setActiveRooms,
   } = useTimetable();
   const [activeDrag, setActiveDrag] = useState<Placement | null>(null);
@@ -746,32 +760,37 @@ export default function Timetable() {
 
   const durations = dataset?.durations ?? DURATIONS;
 
-  // What's in play this semester. The engine only sees these courses and
-  // rooms — but anything already placed stays included so existing chips
-  // never break validation with "unknown id" errors.
+  // What's in play this semester. The engine only sees the courses the
+  // registrar picked (with their per-semester cohort count) and the rooms
+  // they allowed — but anything already placed stays included so existing
+  // chips never break validation with "unknown id" errors.
   const engineDataset = useMemo(() => {
     if (!dataset) return null;
     const placedCourses = new Set(placements.map(p => p.course));
     const placedRooms = new Set(placements.map(p => p.room));
-    const courseSet = activeCourses ? new Set(activeCourses) : null;
     const roomSet = activeRooms ? new Set(activeRooms) : null;
+    // Override each picked course's section count with the chosen cohorts.
+    const courses = dataset.courses
+      .filter(c => (activeCourses && c.code in activeCourses) || placedCourses.has(c.code))
+      .map(c => activeCourses && c.code in activeCourses
+        ? { ...c, sections: activeCourses[c.code] }
+        : c);
     return {
       ...dataset,
-      courses: courseSet
-        ? dataset.courses.filter(c => courseSet.has(c.code) || placedCourses.has(c.code))
-        : dataset.courses,
+      courses,
       rooms: roomSet
         ? dataset.rooms.filter(r => roomSet.has(r.id) || placedRooms.has(r.id))
         : dataset.rooms,
     };
   }, [dataset, activeCourses, activeRooms, placements]);
 
-  // Strictly-selected course codes drive the unscheduled tray.
+  // The picked courses (with cohort overrides) drive the unscheduled tray.
+  // Nothing picked yet → empty tray.
   const semesterCourses = useMemo(() => {
-    if (!dataset) return [];
-    if (!activeCourses) return dataset.courses;
-    const sel = new Set(activeCourses);
-    return dataset.courses.filter(c => sel.has(c.code));
+    if (!dataset || !activeCourses) return [];
+    return dataset.courses
+      .filter(c => c.code in activeCourses)
+      .map(c => ({ ...c, sections: activeCourses[c.code] }));
   }, [dataset, activeCourses]);
 
   // Rooms shown as columns in the day view.
@@ -866,11 +885,17 @@ export default function Timetable() {
     [dataset],
   );
 
-  // Cohort letters only matter for courses that actually run more than one.
-  const multiSection = useMemo(
-    () => new Set((dataset?.courses ?? []).filter(c => c.sections > 1).map(c => c.code)),
-    [dataset],
-  );
+  // Cohort letters only matter for courses that actually run more than one
+  // this semester, so honour the per-course cohort overrides.
+  const multiSection = useMemo(() => {
+    const counts = new Map<string, number>(
+      (dataset?.courses ?? []).map(c => [c.code, c.sections]),
+    );
+    if (activeCourses) {
+      for (const [code, n] of Object.entries(activeCourses)) counts.set(code, n);
+    }
+    return new Set([...counts].filter(([, n]) => n > 1).map(([code]) => code));
+  }, [dataset, activeCourses]);
   const facultyOf = useMemo(
     () => new Map((dataset?.faculty ?? []).map(f => [f.id, f.name])),
     [dataset],
@@ -948,10 +973,15 @@ export default function Timetable() {
 
   const scheduled = useMemo(() => new Set(placements.map(mkKey)), [placements]);
 
-  // Pending meetings grouped per course so the tray reads as a course
-  // list ("CS415 — Software Engineering"), not a wall of identical chips.
+  // One group per picked course so the tray reads as a course list
+  // ("CS415 — Software Engineering") with a cohort stepper, not a wall of
+  // identical chips. Every picked course shows even when fully scheduled,
+  // so cohorts stay adjustable after placement.
   const unscheduledGroups = useMemo(() => {
-    const groups: { code: string; title: string; sessionCount: Record<string, number>; items: InspectorTarget[] }[] = [];
+    const groups: {
+      code: string; title: string; sections: number;
+      sessionCount: Record<string, number>; items: InspectorTarget[];
+    }[] = [];
     for (const c of semesterCourses) {
       const items: InspectorTarget[] = [];
       for (const [kind, count] of Object.entries(c.sessions)) {
@@ -963,7 +993,7 @@ export default function Timetable() {
           }
         }
       }
-      if (items.length) groups.push({ code: c.code, title: c.title, sessionCount: c.sessions, items });
+      groups.push({ code: c.code, title: c.title, sections: c.sections, sessionCount: c.sessions, items });
     }
     return groups;
   }, [semesterCourses, scheduled]);
@@ -971,6 +1001,16 @@ export default function Timetable() {
     () => unscheduledGroups.reduce((s, g) => s + g.items.length, 0),
     [unscheduledGroups],
   );
+
+  // Change how many cohorts a course runs this semester. Removing cohorts
+  // also clears any placements that belonged to the dropped cohort.
+  const setCourseCohorts = useCallback((code: string, n: number) => {
+    const next = Math.max(1, Math.min(26, n));
+    const base = activeCourses ?? {};
+    setActiveCourses({ ...base, [code]: next });
+    const stale = placements.filter(p => p.course === code && p.section > next);
+    for (const p of stale) removePlacement(mkKey(p));
+  }, [activeCourses, setActiveCourses, placements, removePlacement]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -991,7 +1031,7 @@ export default function Timetable() {
           >
             <ListChecks className="h-3.5 w-3.5" />
             This semester
-            {activeCourses && (
+            {semesterCourses.length > 0 && (
               <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] tabular-nums">
                 {semesterCourses.length}
               </span>
@@ -1022,7 +1062,8 @@ export default function Timetable() {
           </button>
           <button
             onClick={handleGenerate}
-            disabled={generating || !dataset?.courses.length}
+            disabled={generating || !semesterCourses.length}
+            title={!semesterCourses.length ? "Pick courses in 'This semester' first" : undefined}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {generating
@@ -1187,39 +1228,70 @@ export default function Timetable() {
               {trayOpen
                 ? <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                 : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-              {trayOpen && <span className="truncate">Unscheduled ({unscheduledCount})</span>}
+              {trayOpen && <span className="truncate">This semester ({unscheduledCount} to place)</span>}
             </button>
             {trayOpen && (
               <div className="flex-1 overflow-y-auto p-2 space-y-3">
                 {!unscheduledGroups.length
-                  ? <div className="pt-4 flex flex-col items-center gap-1.5 text-center px-2">
-                      <CheckCheck className="h-4 w-4 text-success/60" />
+                  ? <div className="pt-6 flex flex-col items-center gap-2 text-center px-3">
+                      <ListChecks className="h-5 w-5 text-muted-foreground/40" />
+                      <p className="text-[11px] text-foreground leading-snug">No courses chosen yet</p>
                       <p className="text-[10px] text-muted-foreground leading-snug">
-                        {semesterCourses.length
-                          ? "All classes scheduled"
-                          : "No courses selected for this semester yet"}
+                        Use <span className="text-foreground">This semester</span> to pick the courses running this term, then set their cohorts here.
                       </p>
+                      <button
+                        onClick={() => setAvailOpen(true)}
+                        className="mt-1 px-2.5 py-1.5 text-[11px] rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                      >
+                        Pick courses
+                      </button>
                     </div>
                   : unscheduledGroups.map(g => (
                       <div key={g.code} className="space-y-1">
-                        <div className="px-1">
-                          <div className="text-[11px] font-mono text-primary leading-tight">{g.code}</div>
-                          <div className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{g.title}</div>
+                        <div className="px-1 flex items-start justify-between gap-1.5">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-mono text-primary leading-tight">{g.code}</div>
+                            <div className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{g.title}</div>
+                          </div>
+                          {/* per-course cohort stepper */}
+                          <div className="flex items-center gap-0.5 shrink-0 mt-0.5" title="Cohorts this semester">
+                            <button
+                              onClick={() => setCourseCohorts(g.code, g.sections - 1)}
+                              disabled={g.sections <= 1}
+                              className="w-4 h-4 rounded border border-border flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+                            >
+                              <Minus className="h-2.5 w-2.5" />
+                            </button>
+                            <span className="w-6 text-center text-[10px] tabular-nums text-foreground">{g.sections}c</span>
+                            <button
+                              onClick={() => setCourseCohorts(g.code, g.sections + 1)}
+                              disabled={g.sections >= 26}
+                              className="w-4 h-4 rounded border border-border flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+                            >
+                              <PlusIcon className="h-2.5 w-2.5" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="space-y-1">
-                          {g.items.map(u => (
-                            <UnscheduledItem
-                              key={`${u.courseCode}|${u.section}|${u.kind}|${u.index}`}
-                              courseCode={u.courseCode}
-                              section={u.section}
-                              kind={u.kind}
-                              index={u.index}
-                              cohort={multiSection.has(u.courseCode) ? cohortLetter(u.section) : undefined}
-                              meetingNo={(g.sessionCount[u.kind] ?? 1) > 1 ? u.index + 1 : undefined}
-                              onClick={() => setInspector(u)}
-                            />
-                          ))}
-                        </div>
+                        {g.items.length ? (
+                          <div className="space-y-1">
+                            {g.items.map(u => (
+                              <UnscheduledItem
+                                key={`${u.courseCode}|${u.section}|${u.kind}|${u.index}`}
+                                courseCode={u.courseCode}
+                                section={u.section}
+                                kind={u.kind}
+                                index={u.index}
+                                cohort={multiSection.has(u.courseCode) ? cohortLetter(u.section) : undefined}
+                                meetingNo={(g.sessionCount[u.kind] ?? 1) > 1 ? u.index + 1 : undefined}
+                                onClick={() => setInspector(u)}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 px-1 text-[10px] text-success/70">
+                            <CheckCheck className="h-3 w-3" /> all scheduled
+                          </div>
+                        )}
                       </div>
                     ))}
               </div>

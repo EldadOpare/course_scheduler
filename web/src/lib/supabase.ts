@@ -76,7 +76,7 @@ export async function loadDataset(): Promise<Dataset | null> {
 // Which courses / classrooms the registrar marked as available this
 // semester. A missing row means no selection has been made yet (= all).
 export async function loadAvailability(): Promise<{
-  courses: string[] | null;
+  courses: Record<string, number> | null;
   rooms: string[] | null;
 }> {
   if (!SUPABASE_CONFIGURED) return { courses: null, rooms: null };
@@ -84,11 +84,17 @@ export async function loadAvailability(): Promise<{
     .from("settings")
     .select("*")
     .in("key", ["active_courses", "active_rooms"]);
-  const items = (k: string) => {
-    const v = data?.find(s => s.key === k)?.value as { items?: string[] | null } | undefined;
-    return v?.items ?? null;
-  };
-  return { courses: items("active_courses"), rooms: items("active_rooms") };
+  const coursesVal = data?.find(s => s.key === "active_courses")?.value as
+    { map?: Record<string, number> | null; items?: string[] | null } | undefined;
+  // New shape is { map }. Older saves used { items: [...] }; migrate those
+  // by defaulting every listed course to a single cohort.
+  let courses: Record<string, number> | null = coursesVal?.map ?? null;
+  if (!courses && coursesVal?.items?.length) {
+    courses = Object.fromEntries(coursesVal.items.map(c => [c, 1]));
+  }
+  const roomsVal = data?.find(s => s.key === "active_rooms")?.value as
+    { items?: string[] | null } | undefined;
+  return { courses, rooms: roomsVal?.items ?? null };
 }
 
 export async function ensureDefaultSession(): Promise<string> {
