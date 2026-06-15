@@ -1,211 +1,145 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard, ShieldAlert, ShieldCheck, SlidersHorizontal,
-  CalendarRange, Loader2, CheckCircle2, AlertTriangle, Brain,
+  LayoutDashboard, CalendarDays, CheckCircle2, AlertTriangle,
+  ChevronDown, ChevronRight, SlidersHorizontal, CalendarRange, Loader2,
+  ArrowRight, BookOpen, Users, DoorOpen,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
-import { explain, simulate } from "@/lib/api";
+import { simulate } from "@/lib/api";
 import PageHeader from "@/components/PageHeader";
-import StatusBadge from "@/components/StatusBadge";
-import type { Violation, Penalty, SchedulingRules, SimulateResult, Dataset } from "@/types";
+import type { SchedulingRules, SimulateResult, Placement } from "@/types";
 import { DEFAULT_RULES, ftTime, pmTime, cohortLetter } from "@/types";
 import { cn } from "@/lib/utils";
 
-interface ReadinessItem {
-  severity: "error" | "warn";
-  message: string;
-}
+const UNASSIGNED = "__unassigned__";
 
-function readinessChecks(ds: Dataset): ReadinessItem[] {
-  const items: ReadinessItem[] = [];
-  const courseCodes = new Set(ds.courses.map(c => c.code));
-
-  for (const c of ds.courses) {
-    const approved = ds.faculty.filter(f => f.approved_courses.includes(c.code));
-    if (!approved.length) {
-      items.push({ severity: "error", message: `${c.code} has no approved lecturer. It cannot be scheduled.` });
-    }
-    const perSection = Math.ceil(c.expected_enrollment / Math.max(c.sections, 1));
-    if (c.requires_room_type) {
-      const typed = ds.rooms.filter(r => r.type === c.requires_room_type);
-      if (!typed.length) {
-        items.push({ severity: "error", message: `${c.code} needs a ${c.requires_room_type} but none exists` });
-      } else if (!typed.some(r => r.capacity >= perSection)) {
-        items.push({ severity: "error", message: `No ${c.requires_room_type} seats ${perSection} students for ${c.code} labs` });
-      }
-    }
-    if (!ds.rooms.some(r => r.capacity >= perSection)) {
-      items.push({ severity: "error", message: `No room has enough seats for ${c.code} (${perSection} students per section). Add a larger room or split into more sections.` });
-    }
-  }
-
-  for (const plan of ds.course_plans ?? []) {
-    for (const code of plan.mandatory) {
-      if (!courseCodes.has(code)) {
-        items.push({ severity: "error", message: `Plan ${plan.major_id} Y${plan.year} S${plan.semester} lists ${code}, which is not in the course catalogue` });
-      }
-    }
-    for (const pool of plan.elective_pools) {
-      const known = pool.courses.filter(c => courseCodes.has(c));
-      if (known.length < pool.pick) {
-        items.push({ severity: "error", message: `Pool “${pool.label}” (${plan.major_id} Y${plan.year} S${plan.semester}) asks students to pick ${pool.pick} but only ${known.length} of its courses exist` });
-      }
-    }
-  }
-
-  for (const f of ds.faculty) {
-    if (f.type === "adjunct" && !f.availability.length) {
-      items.push({ severity: "warn", message: `${f.name} is an adjunct with no availability set. Every class placed for them will be a conflict.` });
-    }
-  }
-
-  const sectionsNeeded = ds.courses.reduce((s, c) => s + c.sections, 0);
-  const facultyCapacity = ds.faculty.reduce((s, f) => s + f.load_target + f.max_overload, 0);
-  if (sectionsNeeded > facultyCapacity) {
-    items.push({ severity: "warn", message: `${sectionsNeeded} sections needed but lecturers can only cover ${facultyCapacity}. More hiring may be required.` });
-  }
-
-  if (ds.majors?.length && ds.course_plans?.length) {
-    for (const m of ds.majors) {
-      for (const sem of [1, 2] as const) {
-        if (!ds.course_plans.some(p => p.major_id === m.id && p.semester === sem)) {
-          items.push({ severity: "warn", message: `${m.name} has no course plan for semester ${sem}` });
-        }
-      }
-    }
-  }
-
-  return items.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "error" ? -1 : 1));
-}
+const DAY_LABEL: Record<string, string> = {
+  Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday",
+  Fri: "Friday", Sat: "Saturday", Sun: "Sunday",
+};
 
 export default function Dashboard() {
-  const { placements, dataset, validation } = useTimetable();
-  const [summary, setSummary] = useState<string | null>(null);
-  const [summarising, setSummarising] = useState(false);
-  const ds = dataset;
-  const v = validation;
+  const navigate = useNavigate();
+  const { placements, dataset, validation, activeCourses } = useTimetable();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const totalMeetings = ds
-    ? ds.courses.reduce((s, c) => s + c.sections * Object.values(c.sessions).reduce((a, b) => a + b, 0), 0)
-    : 0;
-
-  const readiness = useMemo(() => (ds ? readinessChecks(ds) : []), [ds]);
-  const errors = readiness.filter(r => r.severity === "error").length;
-
-  const handleSummarise = useCallback(async () => {
-    if (!ds) return;
-    setSummarising(true);
-    try {
-      const res = await explain(placements, ds);
-      setSummary(res.summary || res.error || "No summary returned.");
-    } catch {
-      setSummary("Could not generate a summary. Check that the AI key is configured.");
-    } finally {
-      setSummarising(false);
+  // Everything below is framed for a registrar: plain counts and a glance
+  // at the week, not engine internals.
+  const stats = useMemo(() => {
+    const picked = activeCourses ? Object.keys(activeCourses) : [];
+    const pickedSet = new Set(picked);
+    let meetings = 0;
+    for (const c of dataset?.courses ?? []) {
+      if (!pickedSet.has(c.code)) continue;
+      const cohorts = activeCourses?.[c.code] || c.sections;
+      meetings += cohorts * Object.values(c.sessions).reduce((a, b) => a + b, 0);
     }
-  }, [placements, ds]);
+    const unassigned = placements.filter(p => p.faculty === UNASSIGNED).length;
+    const roomsUsed = new Set(placements.map(p => p.room)).size;
+    return {
+      coursesThisSemester: picked.length,
+      totalMeetings: meetings,
+      placed: placements.length,
+      unassigned,
+      roomsUsed,
+    };
+  }, [dataset, activeCourses, placements]);
+
+  const conflicts = validation?.violations.length ?? 0;
+  const checked = validation != null;
+
+  // The single most important line for a registrar: can I publish this?
+  const status: { tone: "good" | "warn" | "bad" | "idle"; title: string; detail: string } =
+    !dataset
+      ? { tone: "idle", title: "Loading…", detail: "Fetching your data." }
+      : stats.coursesThisSemester === 0
+        ? { tone: "idle", title: "No courses selected yet",
+            detail: "Open the timetable and choose which courses run this semester to begin." }
+        : !checked
+          ? { tone: "warn", title: "Not validated yet",
+              detail: "Open the timetable and click Validate to check for conflicts." }
+          : conflicts > 0
+            ? { tone: "bad", title: `${conflicts} conflict${conflicts !== 1 ? "s" : ""} to resolve`,
+                detail: "Some classes clash. Fix them before publishing the timetable." }
+            : { tone: "good", title: "Ready to publish",
+                detail: "No conflicts. The timetable satisfies every rule." };
+
+  // Plain-language to-do list — only what a registrar can act on.
+  const todos = useMemo(() => {
+    const out: { text: string; tone: "bad" | "warn"; to: string }[] = [];
+    if (conflicts > 0)
+      out.push({ text: `${conflicts} scheduling conflict${conflicts !== 1 ? "s" : ""} to fix`, tone: "bad", to: "/timetable" });
+    const unscheduled = Math.max(stats.totalMeetings - stats.placed, 0);
+    if (stats.coursesThisSemester > 0 && unscheduled > 0)
+      out.push({ text: `${unscheduled} class${unscheduled !== 1 ? "es" : ""} still need a time slot`, tone: "warn", to: "/timetable" });
+    if (stats.unassigned > 0)
+      out.push({ text: `${stats.unassigned} class${stats.unassigned !== 1 ? "es have" : " has"} no lecturer assigned`, tone: "warn", to: "/timetable" });
+    return out;
+  }, [conflicts, stats]);
 
   const kpis = [
-    {
-      label: "Setup status",
-      value: readiness.length ? `${readiness.length} issue${readiness.length !== 1 ? "s" : ""}` : "All good",
-      color: errors ? "text-destructive" : readiness.length ? "text-foreground" : "text-success",
-      sub: errors ? `${errors} critical issue${errors !== 1 ? "s" : ""} to resolve` : "Courses, lecturers, rooms and plans look consistent",
-    },
-    {
-      label: "Timetable status",
-      value: v ? (v.valid ? "No conflicts" : `${v.violations.length} conflict${v.violations.length !== 1 ? "s" : ""}`) : "Not checked",
-      color: v ? (v.valid ? "text-success" : "text-destructive") : "text-muted-foreground",
-      sub: v ? (v.valid ? "All rules satisfied. Ready to publish." : "Fix these conflicts before publishing.") : "Click Validate on the timetable page.",
-    },
-    {
-      label: "Quality score",
-      value: v ? String(v.score) : "—",
-      color: "text-foreground",
-      sub: "Lower score means a better timetable",
-    },
-    {
-      label: "Classes scheduled",
-      value: `${placements.length} / ${totalMeetings}`,
-      color: "text-foreground",
-      sub: totalMeetings ? `${Math.round((placements.length / totalMeetings) * 100)}% of the catalogue` : "No courses yet",
-    },
+    { label: "Classes scheduled", value: `${stats.placed}${stats.totalMeetings ? ` / ${stats.totalMeetings}` : ""}`, icon: CalendarDays, to: "/timetable" },
+    { label: "Courses this semester", value: stats.coursesThisSemester, icon: BookOpen, to: "/timetable" },
+    { label: "Lecturers assigned", value: stats.placed ? `${stats.placed - stats.unassigned} / ${stats.placed}` : "—", icon: Users, to: "/timetable" },
+    { label: "Rooms in use", value: stats.roomsUsed, icon: DoorOpen, to: "/classrooms" },
   ];
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 md:py-7 space-y-5">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 md:py-7 space-y-5">
 
         <PageHeader
           icon={LayoutDashboard}
           title="Overview"
-          subtitle="Overview of the current timetable and data status"
-          actions={
-            <StatusBadge
-              valid={v?.valid ?? null}
-              violations={v?.violations.length}
-              score={v?.score}
-            />
-          }
+          subtitle="A quick look at this semester's timetable"
         />
 
-        {/* KPI cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {kpis.map((card, i) => (
-            <div
-              key={card.label}
-              className="animate-fade-up bg-card border border-border rounded-xl px-4 py-3.5"
-              style={{ animationDelay: `${i * 55}ms` }}
+        {/* status hero */}
+        <StatusHero status={status} onOpen={() => navigate("/timetable")} />
+
+        {/* KPIs */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {kpis.map((k, i) => (
+            <button
+              key={k.label}
+              onClick={() => navigate(k.to)}
+              className="animate-fade-up text-left bg-card border border-border rounded-xl px-4 py-4 hover:border-primary/40 hover:shadow-sm transition-all"
+              style={{ animationDelay: `${i * 50}ms` }}
             >
-              <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-2">
-                {card.label}
-              </div>
-              <div className={cn("text-2xl", card.color)}>{card.value}</div>
-              <div className="text-xs text-muted-foreground mt-1">{card.sub}</div>
-            </div>
+              <k.icon className="h-4 w-4 text-muted-foreground/60 mb-2" />
+              <div className="text-2xl text-foreground tabular-nums">{k.value}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{k.label}</div>
+            </button>
           ))}
         </div>
 
-        {/* Readiness + simulation */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ReadinessPanel items={readiness} hasData={!!ds} />
-          <SimulationCard />
-        </div>
-
-        {/* Scheduling rules */}
-        <RulesCard />
-
-        {/* Validation issues */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <IssuePanel title="Scheduling conflicts" hint="fix before publishing" items={v?.violations ?? []} type="hard" />
-          <IssuePanel title="Quality suggestions" hint="improvements for a better timetable" items={v?.penalties ?? []} type="soft" />
-        </div>
-
-        {/* AI summary */}
-        <div className="bg-card border border-border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Brain className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <div className="text-sm text-foreground">Timetable summary</div>
-                <div className="text-[10px] text-muted-foreground mt-0.5 tracking-[0.06em] uppercase">AI overview of the current state</div>
-              </div>
-            </div>
-            <button
-              onClick={handleSummarise}
-              disabled={summarising || !ds}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
-            >
-              {summarising ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Brain className="h-3.5 w-3.5" />}
-              {summarising ? "Generating..." : "Generate summary"}
-            </button>
+        {/* week + to-do */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2">
+            <WeekGlance placements={placements} />
           </div>
-          {summary ? (
-            <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{summary}</p>
-          ) : (
-            <p className="text-xs text-muted-foreground italic">
-              Click "Generate summary" for an AI overview of the timetable and any issues found.
-            </p>
+          <TodoCard todos={todos} onOpen={() => navigate("/timetable")} />
+        </div>
+
+        {/* advanced (kept, tucked away) */}
+        <div className="bg-card border border-border rounded-xl">
+          <button
+            onClick={() => setAdvancedOpen(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-3.5 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-foreground">Advanced settings</span>
+              <span className="text-[10px] text-muted-foreground tracking-[0.06em] uppercase">scheduling rules · full-year check</span>
+            </div>
+            {advancedOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          {advancedOpen && (
+            <div className="px-5 pb-5 space-y-4 border-t border-border pt-4">
+              <RulesCard />
+              <SimulationCard />
+            </div>
           )}
         </div>
 
@@ -214,121 +148,130 @@ export default function Dashboard() {
   );
 }
 
-function ReadinessPanel({ items, hasData }: { items: ReadinessItem[]; hasData: boolean }) {
+function StatusHero({
+  status, onOpen,
+}: {
+  status: { tone: "good" | "warn" | "bad" | "idle"; title: string; detail: string };
+  onOpen: () => void;
+}) {
+  const tone = {
+    good: { ring: "border-success/30 bg-success/5", icon: <CheckCircle2 className="h-6 w-6 text-success" /> },
+    bad:  { ring: "border-destructive/30 bg-destructive/5", icon: <AlertTriangle className="h-6 w-6 text-destructive" /> },
+    warn: { ring: "border-amber-500/30 bg-amber-500/5", icon: <AlertTriangle className="h-6 w-6 text-amber-500" /> },
+    idle: { ring: "border-border bg-muted/30", icon: <CalendarDays className="h-6 w-6 text-muted-foreground" /> },
+  }[status.tone];
+
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
-      <div className="flex items-baseline justify-between gap-2 mb-4">
-        <div className="text-sm text-foreground">Setup checklist</div>
-        <span className="text-[10px] text-muted-foreground">fix these before generating a timetable</span>
+    <div className={cn("animate-fade-up rounded-xl border p-5 flex items-center gap-4", tone.ring)}>
+      <div className="shrink-0">{tone.icon}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-base text-foreground">{status.title}</div>
+        <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{status.detail}</div>
       </div>
-      {!hasData ? (
-        <p className="text-xs text-muted-foreground italic">Waiting for the dataset to load.</p>
-      ) : !items.length ? (
-        <div className="flex items-center gap-2 text-xs text-success">
-          <ShieldCheck className="h-4 w-4" /> Everything looks good. Courses, lecturers, rooms and plans are all consistent.
+      <button
+        onClick={onOpen}
+        className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+      >
+        Open timetable <ArrowRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function WeekGlance({ placements }: { placements: Placement[] }) {
+  const { dataset } = useTimetable();
+  const roomName = useMemo(
+    () => new Map((dataset?.rooms ?? []).map(r => [r.id, r.name])),
+    [dataset],
+  );
+  const multi = useMemo(
+    () => new Set((dataset?.courses ?? []).filter(c => c.sections > 1).map(c => c.code)),
+    [dataset],
+  );
+  const days = dataset?.timegrid?.weekdays ?? ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+  const byDay = useMemo(() => {
+    const m = new Map<string, Placement[]>();
+    for (const d of days) m.set(d, []);
+    for (const p of placements) {
+      if (m.has(p.day)) m.get(p.day)!.push(p);
+    }
+    for (const list of m.values()) list.sort((a, b) => pmTime(a.start) - pmTime(b.start));
+    return m;
+  }, [placements, days]);
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 h-full">
+      <div className="flex items-center gap-2 mb-4">
+        <CalendarDays className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm text-foreground">This week at a glance</span>
+      </div>
+      {!placements.length ? (
+        <div className="py-10 text-center">
+          <CalendarDays className="h-6 w-6 text-muted-foreground/30 mx-auto mb-2" />
+          <p className="text-xs text-muted-foreground">Nothing scheduled yet.</p>
+          <p className="text-[11px] text-muted-foreground/70 mt-0.5">Generate or place classes on the timetable to see them here.</p>
         </div>
       ) : (
-        <ul className="space-y-1.5 max-h-72 overflow-y-auto">
-          {items.map((it, i) => (
-            <li key={i} className={cn("flex items-start gap-2 rounded-lg px-2.5 py-2 text-xs", i % 2 === 0 ? "bg-muted/40" : "")}>
-              <ShieldAlert className={cn(
-                "h-3.5 w-3.5 shrink-0 mt-0.5",
-                it.severity === "error" ? "text-destructive" : "text-muted-foreground",
-              )} />
-              <span className="text-muted-foreground leading-snug">{it.message}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {days.map(d => {
+            const list = byDay.get(d) ?? [];
+            return (
+              <div key={d} className="min-w-0">
+                <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-2">
+                  {DAY_LABEL[d] ?? d}
+                  <span className="ml-1 text-muted-foreground/40">{list.length || ""}</span>
+                </div>
+                <div className="space-y-1.5">
+                  {list.length === 0 && <div className="text-[11px] text-muted-foreground/40">—</div>}
+                  {list.map((p, i) => (
+                    <div key={i} className="rounded-lg border border-border bg-background px-2 py-1.5">
+                      <div className="text-[11px] text-foreground truncate">
+                        {p.course}{multi.has(p.course) ? ` · ${cohortLetter(p.section)}` : ""}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground tabular-nums">{p.start}</div>
+                      <div className="text-[10px] text-muted-foreground/70 truncate">{roomName.get(p.room) ?? p.room}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
 }
 
-function SimulationCard() {
-  const { dataset } = useTimetable();
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<SimulateResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = async () => {
-    if (!dataset || running) return;
-    setRunning(true);
-    setError(null);
-    try {
-      setResult(await simulate(dataset));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Simulation failed");
-    } finally {
-      setRunning(false);
-    }
-  };
-
+function TodoCard({
+  todos, onOpen,
+}: {
+  todos: { text: string; tone: "bad" | "warn"; to: string }[];
+  onOpen: () => void;
+}) {
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        <div className="flex items-center gap-2">
-          <CalendarRange className="h-4 w-4 text-muted-foreground" />
-          <div>
-            <div className="text-sm text-foreground">Full-year check</div>
-            <div className="text-[10px] text-muted-foreground mt-0.5 tracking-[0.06em] uppercase">
-              Both semesters, all majors
-            </div>
-          </div>
+    <div className="bg-card border border-border rounded-xl p-5 h-full flex flex-col">
+      <div className="text-sm text-foreground mb-4">Needs attention</div>
+      {!todos.length ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
+          <CheckCircle2 className="h-6 w-6 text-success mb-2" />
+          <p className="text-xs text-foreground">All clear</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Nothing needs your attention right now.</p>
         </div>
-        <button
-          onClick={run}
-          disabled={running || !dataset}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-        >
-          {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarRange className="h-3.5 w-3.5" />}
-          {running ? "Simulating…" : "Run"}
-        </button>
-      </div>
-
-      {error && <p className="text-xs text-destructive mb-3">{error}</p>}
-
-      {!result && !error && (
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          Update student numbers on the Students page, then run this to check whether
-          both semesters fit with the current rooms and lecturers.
-        </p>
-      )}
-
-      {result && (
-        <div className="space-y-3">
-          <div className={cn(
-            "flex items-center gap-2 text-xs",
-            result.feasible ? "text-success" : "text-destructive",
-          )}>
-            {result.feasible
-              ? <><CheckCircle2 className="h-4 w-4" /> The whole year works with the current numbers.</>
-              : <><AlertTriangle className="h-4 w-4" /> Some classes could not be scheduled. See the details below.</>}
-          </div>
-          {result.semesters.map(s => (
-            <div key={s.semester} className="rounded-lg border border-border p-3.5">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-xs text-foreground">Semester {s.semester}</span>
-                <span className="text-[11px] text-muted-foreground">
-                  {s.placed}/{s.total_meetings} classes · {s.courses_in_play} courses
-                  {s.students > 0 && <> · {s.students} students</>} · quality: {s.score}
-                </span>
-              </div>
-              {s.note && <p className="text-[11px] text-muted-foreground italic mt-1">{s.note}</p>}
-              {s.unplaced.length > 0 && (
-                <ul className="mt-2 space-y-0.5">
-                  {s.unplaced.slice(0, 5).map((u, i) => (
-                    <li key={i} className="text-[11px] text-destructive/90">
-                      · {u.course}{u.section > 1 ? ` (Cohort ${cohortLetter(u.section)})` : ""} {u.kind}: {u.reason}
-                    </li>
-                  ))}
-                  {s.unplaced.length > 5 && (
-                    <li className="text-[11px] text-muted-foreground">…and {s.unplaced.length - 5} more</li>
-                  )}
-                </ul>
-              )}
-            </div>
+      ) : (
+        <ul className="space-y-2 flex-1">
+          {todos.map((t, i) => (
+            <li key={i}>
+              <button
+                onClick={onOpen}
+                className="w-full flex items-start gap-2.5 rounded-lg border border-border px-3 py-2.5 text-left hover:border-primary/40 transition-colors"
+              >
+                <span className={cn("mt-1 h-2 w-2 rounded-full shrink-0", t.tone === "bad" ? "bg-destructive" : "bg-amber-500")} />
+                <span className="text-xs text-foreground leading-snug">{t.text}</span>
+              </button>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );
@@ -342,7 +285,9 @@ function RulesCard() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (dataset?.rules) setDraft(dataset.rules); // eslint-disable-line react-hooks/exhaustive-deps
+    // Sync the editable draft when the saved rules load/change from the store.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (dataset?.rules) setDraft(dataset.rules);
   }, [dataset?.rules]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(dataset?.rules ?? DEFAULT_RULES);
@@ -359,15 +304,12 @@ function RulesCard() {
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
+    <div className="rounded-xl border border-border p-5">
       <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        <div className="flex items-center gap-2">
-          <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
-          <div>
-            <div className="text-sm text-foreground">Scheduling rules</div>
-            <div className="text-[10px] text-muted-foreground mt-0.5 tracking-[0.06em] uppercase">
-              Applied during validation and timetable generation
-            </div>
+        <div>
+          <div className="text-sm text-foreground">Scheduling rules</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5 tracking-[0.06em] uppercase">
+            Applied during validation and generation
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -383,7 +325,6 @@ function RulesCard() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* minimum break */}
         <div>
           <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-2">
             Minimum break between classes
@@ -410,12 +351,8 @@ function RulesCard() {
               className="w-16 px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
             />
           </div>
-          <p className="text-[11px] text-muted-foreground mt-2 leading-snug">
-            Gaps at or under this count as back-to-back (passing time).
-          </p>
         </div>
 
-        {/* maximum gap */}
         <div>
           <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-2">
             Maximum idle gap
@@ -429,12 +366,8 @@ function RulesCard() {
             />
             <span className="text-xs text-muted-foreground">minutes</span>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-2 leading-snug">
-            Student gaps longer than this are penalised as dead time.
-          </p>
         </div>
 
-        {/* lunch window */}
         <div>
           <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-2">
             Lunch window
@@ -454,50 +387,94 @@ function RulesCard() {
               className="px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
             />
           </div>
-          <div className="flex items-center gap-1.5 mt-2">
-            <input
-              type="number" min={0} step={5}
-              value={draft.lunch_min}
-              onChange={e => setDraft(d => ({ ...d, lunch_min: num(e.target.value, d.lunch_min) }))}
-              className="w-16 px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
-            />
-            <span className="text-[11px] text-muted-foreground">min free time students need in the window</span>
-          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function IssuePanel({
-  title, hint, items, type,
-}: {
-  title: string; hint: string;
-  items: (Violation | Penalty)[];
-  type: "hard" | "soft";
-}) {
+function SimulationCard() {
+  const { dataset } = useTimetable();
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<SimulateResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    if (!dataset || running) return;
+    setRunning(true);
+    setError(null);
+    try {
+      setResult(await simulate(dataset));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Simulation failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
-      <div className="flex items-baseline justify-between gap-2 mb-4">
-        <div className="text-sm text-foreground">{title}</div>
-        <span className="text-[10px] text-muted-foreground">{hint}</span>
+    <div className="rounded-xl border border-border p-5">
+      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+        <div>
+          <div className="text-sm text-foreground">Full-year check</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5 tracking-[0.06em] uppercase">
+            Both semesters, all majors
+          </div>
+        </div>
+        <button
+          onClick={run}
+          disabled={running || !dataset}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarRange className="h-3.5 w-3.5" />}
+          {running ? "Simulating…" : "Run"}
+        </button>
       </div>
-      {!items.length ? (
-        <p className="text-xs text-muted-foreground italic">
-          {type === "hard" ? "No conflicts. This timetable is ready to publish." : "No suggestions. The timetable looks great."}
+
+      {error && <p className="text-xs text-destructive mb-3">{error}</p>}
+
+      {!result && !error && (
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Checks whether both semesters fit with the current rooms and lecturers,
+          using the student numbers on the Students page.
         </p>
-      ) : (
-        <ul className="space-y-1.5 max-h-72 overflow-y-auto">
-          {items.map((it, i) => (
-            <li key={i} className={cn("flex items-start gap-2 rounded-lg px-2.5 py-2 text-xs", i % 2 === 0 ? "bg-muted/40" : "")}>
-              <span className={cn(
-                "mt-0.5 h-1.5 w-1.5 rounded-full shrink-0",
-                type === "hard" ? "bg-destructive" : "bg-muted-foreground/50",
-              )} />
-              <span className="text-muted-foreground leading-snug">{it.message}</span>
-            </li>
+      )}
+
+      {result && (
+        <div className="space-y-3">
+          <div className={cn(
+            "flex items-center gap-2 text-xs",
+            result.feasible ? "text-success" : "text-destructive",
+          )}>
+            {result.feasible
+              ? <><CheckCircle2 className="h-4 w-4" /> The whole year works with the current numbers.</>
+              : <><AlertTriangle className="h-4 w-4" /> Some classes could not be scheduled.</>}
+          </div>
+          {result.semesters.map(s => (
+            <div key={s.semester} className="rounded-lg border border-border p-3.5">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs text-foreground">Semester {s.semester}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {s.placed}/{s.total_meetings} classes · {s.courses_in_play} courses
+                  {s.students > 0 && <> · {s.students} students</>}
+                </span>
+              </div>
+              {s.note && <p className="text-[11px] text-muted-foreground italic mt-1">{s.note}</p>}
+              {s.unplaced.length > 0 && (
+                <ul className="mt-2 space-y-0.5">
+                  {s.unplaced.slice(0, 5).map((u, i) => (
+                    <li key={i} className="text-[11px] text-destructive/90">
+                      · {u.course}{u.section > 1 ? ` (Cohort ${cohortLetter(u.section)})` : ""} {u.kind}: {u.reason}
+                    </li>
+                  ))}
+                  {s.unplaced.length > 5 && (
+                    <li className="text-[11px] text-muted-foreground">…and {s.unplaced.length - 5} more</li>
+                  )}
+                </ul>
+              )}
+            </div>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );
