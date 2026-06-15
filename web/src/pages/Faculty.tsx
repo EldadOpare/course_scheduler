@@ -555,7 +555,7 @@ export default function FacultyPage() {
           <EmptyState
             icon={Users}
             title="No lecturers added yet"
-            description="Add your lecturers here. Each one can have approved courses and availability windows — used when generating the timetable."
+            description="Add your lecturers here. Each one can have approved courses and availability windows, used when generating the timetable."
           />
         ) : !visible.length ? (
           <EmptyState

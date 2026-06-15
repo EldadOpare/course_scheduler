@@ -51,6 +51,7 @@ export interface Placement {
   start: string;
   room: string;
   faculty: string;
+  assistant?: string; // optional faculty intern (FI) assisting the lecturer
 }
 
 export interface MeetingKey {

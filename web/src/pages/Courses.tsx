@@ -28,7 +28,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   return (
     <div>
       <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-1.5">
-        {label}{hint && <span className="normal-case tracking-normal ml-1 opacity-60">— {hint}</span>}
+        {label}{hint && <span className="normal-case tracking-normal ml-1 opacity-60">· {hint}</span>}
       </div>
       {children}
     </div>

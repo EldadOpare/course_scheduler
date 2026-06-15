@@ -232,6 +232,7 @@ async function persistPlacement(sessionId: string, p: Placement) {
       start_time: p.start,
       room: p.room,
       faculty: p.faculty,
+      assistant: p.assistant ?? null,
     },
     { onConflict: "semester_id,course,section,kind,index_" },
   );
@@ -257,6 +258,7 @@ async function replaceSessionPlacements(sessionId: string, placements: Placement
     start_time: p.start,
     room: p.room,
     faculty: p.faculty,
+    assistant: p.assistant ?? null,
   })));
 }
 

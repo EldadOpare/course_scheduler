@@ -81,7 +81,7 @@ export default function Dashboard() {
   const kpis = [
     { label: "Classes scheduled", value: `${stats.placed}${stats.totalMeetings ? ` / ${stats.totalMeetings}` : ""}`, icon: CalendarDays, to: "/timetable" },
     { label: "Courses this semester", value: stats.coursesThisSemester, icon: BookOpen, to: "/timetable" },
-    { label: "Lecturers assigned", value: stats.placed ? `${stats.placed - stats.unassigned} / ${stats.placed}` : "—", icon: Users, to: "/timetable" },
+    { label: "Lecturers assigned", value: stats.placed ? `${stats.placed - stats.unassigned} / ${stats.placed}` : "0", icon: Users, to: "/timetable" },
     { label: "Rooms in use", value: stats.roomsUsed, icon: DoorOpen, to: "/classrooms" },
   ];
 
@@ -223,7 +223,7 @@ function WeekGlance({ placements }: { placements: Placement[] }) {
                   <span className="ml-1 text-muted-foreground/40">{list.length || ""}</span>
                 </div>
                 <div className="space-y-1.5">
-                  {list.length === 0 && <div className="text-[11px] text-muted-foreground/40">—</div>}
+                  {list.length === 0 && <div className="text-[11px] text-muted-foreground/40">No classes</div>}
                   {list.map((p, i) => (
                     <div key={i} className="rounded-lg border border-border bg-background px-2 py-1.5">
                       <div className="text-[11px] text-foreground truncate">

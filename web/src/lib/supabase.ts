@@ -129,6 +129,7 @@ export async function loadSessionPlacements(sessionId: string) {
     start: r.start_time,
     room: r.room,
     faculty: r.faculty,
+    assistant: r.assistant ?? undefined,
   }));
 }
 

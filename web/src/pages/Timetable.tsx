@@ -44,6 +44,33 @@ const KIND_COLOR: Record<string, string> = {
 function toMin(hhmm: string) { return pmTime(hhmm); }
 function toHHMM(min: number) { return ftTime(min); }
 
+// Plain-English heading for each rule code, so a registrar reads
+// "Room double-booked" instead of "H-ROOM-1".
+const CONFLICT_LABEL: Record<string, string> = {
+  "H-DUP": "Class placed twice",
+  "H-STU-1": "Two classes a cohort needs clash",
+  "H-STU-2": "Outside teaching hours",
+  "H-STU-3": "Elective pool does not fit",
+  "H-FAC-1": "Lecturer double-booked",
+  "H-FAC-2": "Lecturer not available then",
+  "H-FAC-3": "Lecturer not approved for this course",
+  "H-FAC-4": "Lecturer has too many classes",
+  "H-FAC-5": "Lecturer's day is too long",
+  "H-ROOM-0": "Room does not exist",
+  "H-ROOM-1": "Room double-booked",
+  "H-ROOM-2": "Room is too small",
+  "H-ROOM-3": "Wrong type of room",
+  "H-ROOM-4": "Room is restricted",
+  "H-TIME-1": "Not an approved time slot",
+  "H-PREREQ": "A course and its prerequisite clash",
+};
+
+// Engine messages are already sentences; just tidy any stray dashes so the
+// text stays clean and readable (no em dashes anywhere).
+function tidy(msg: string): string {
+  return msg.replace(/\s*[—–]\s*/g, ", ").replace(/\s+vs\s+/g, " and ");
+}
+
 interface GridSlot { lane: number; lanes: number; placement: Placement }
 
 function layoutGrid(
@@ -97,7 +124,9 @@ function PlacementChip({
       )}
     >
       <div className="truncate">{placement.course}{cohort ? ` · ${cohort}` : ""}</div>
-      <div className="truncate opacity-50 text-[9px] uppercase tracking-[0.06em]">{placement.kind}</div>
+      <div className="truncate opacity-70 text-[9px] tabular-nums">
+        {placement.start} to {toHHMM(toMin(placement.start) + dur)}
+      </div>
       {roomName && dur >= 60 && (
         <div className="truncate opacity-70 text-[9px]">{roomName}</div>
       )}
@@ -174,7 +203,7 @@ function Inspector({
   days: string[];
   onClose: () => void;
   onPlace: (opt: PlaceOption) => void;
-  onManualPlace: (m: { day: string; start: string; room: string; faculty: string }) => void;
+  onManualPlace: (m: { day: string; start: string; room: string; faculty: string; assistant: string }) => void;
 }) {
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState<PlaceOption[]>([]);
@@ -184,6 +213,7 @@ function Inspector({
   const [mStart, setMStart] = useState("");
   const [mRoom, setMRoom] = useState("");
   const [mFaculty, setMFaculty] = useState(UNASSIGNED);
+  const [mAssistant, setMAssistant] = useState("");
 
   const tKey = target
     ? `${target.courseCode}|${target.section}|${target.kind}|${target.index}|${target.day}|${target.startStr}`
@@ -235,7 +265,11 @@ function Inspector({
       <div className="px-4 py-3 border-b border-border space-y-0.5">
         <div className="text-sm text-foreground">{target.courseCode}{cohort ? ` · Cohort ${cohort}` : ""}</div>
         <div className="text-xs text-muted-foreground capitalize">{target.kind}{target.index > 0 ? ` (meeting ${target.index + 1})` : ""}</div>
-        {target.day && <div className="text-xs text-muted-foreground">{target.day} {target.startStr ?? ""}</div>}
+        {target.day && target.startStr && (
+          <div className="text-xs text-muted-foreground tabular-nums">
+            {target.day} · {target.startStr} to {toHHMM(toMin(target.startStr) + (dataset?.durations?.[target.kind] ?? DURATIONS[target.kind] ?? 90))}
+          </div>
+        )}
       </div>
       <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
         <button
@@ -346,10 +380,25 @@ function Inspector({
                     ))}
                 </select>
               </label>
+              {(dataset?.faculty ?? []).some(f => f.type === "faculty_intern") && (
+                <label className="block">
+                  <span className="text-[10px] text-muted-foreground">Faculty intern (optional)</span>
+                  <select
+                    value={mAssistant}
+                    onChange={e => setMAssistant(e.target.value)}
+                    className="w-full mt-0.5 px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
+                  >
+                    <option value="">No intern</option>
+                    {(dataset?.faculty ?? [])
+                      .filter(f => f.type === "faculty_intern")
+                      .map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </select>
+                </label>
+              )}
               <button
                 onClick={() => {
                   if (!mDay || !mStart || !mRoom) return;
-                  onManualPlace({ day: mDay, start: mStart, room: mRoom, faculty: mFaculty });
+                  onManualPlace({ day: mDay, start: mStart, room: mRoom, faculty: mFaculty, assistant: mAssistant });
                 }}
                 disabled={!mDay || !mStart || !mRoom}
                 className="w-full py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
@@ -357,7 +406,7 @@ function Inspector({
                 Place at this time
               </button>
               <p className="text-[10px] text-muted-foreground leading-snug">
-                Manual placement skips the slot checks — run Validate afterwards to catch any clashes.
+                Manual placement skips the slot checks. Run Validate afterwards to catch any clashes.
               </p>
             </div>
           )}
@@ -415,119 +464,6 @@ function exportCsv(placements: Placement[], dataset: Dataset) {
   a.download = "timetable-camu.csv";
   a.click();
   URL.revokeObjectURL(a.href);
-}
-
-function GenerateModal({
-  options, onApply, onClose,
-}: {
-  options: GenerateOption[];
-  onApply: (opt: GenerateOption) => void;
-  onClose: () => void;
-}) {
-  const best = options[0];
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-foreground/20 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="relative w-full max-w-[680px] max-h-[90vh] flex flex-col rounded-xl border border-border bg-background shadow-xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <div>
-            <h2 className="text-sm text-foreground">Generated drafts</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Best option shown first. Drawbacks are listed so you can choose. You can still edit everything after applying.
-            </p>
-          </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {options.map((opt, i) => (
-            <div key={opt.label} className={cn(
-              "rounded-xl border p-4",
-              opt === best ? "border-primary/40 bg-primary/[0.03]" : "border-border",
-            )}>
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-foreground">{opt.label}</span>
-                  {i === 0 && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-primary/10 text-primary">Recommended</span>
-                  )}
-                  {opt.complete ? (
-                    <span className="flex items-center gap-1 text-[10px] text-success">
-                      <CheckCircle2 className="h-3 w-3" /> valid · all meetings placed
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-[10px] text-destructive">
-                      <AlertTriangle className="h-3 w-3" />
-                      {opt.unplaced.length
-                        ? `${opt.unplaced.length} unplaced`
-                        : `${opt.violations.length} rule violation${opt.violations.length !== 1 ? "s" : ""}`}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">
-                    quality: {opt.score}
-                  </span>
-                  <button
-                    onClick={() => onApply(opt)}
-                    className="px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                  >
-                    Apply
-                  </button>
-                </div>
-              </div>
-
-              {opt.penalties.length > 0 && (
-                <div className="mt-3">
-                  <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-1">
-                    Minor drawbacks ({opt.penalties.length})
-                  </div>
-                  <ul className="space-y-0.5 max-h-32 overflow-y-auto">
-                    {opt.penalties.map((p, j) => (
-                      <li key={j} className="text-xs text-muted-foreground">· {p.message}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {opt.penalties.length === 0 && opt.complete && (
-                <p className="mt-2 text-xs text-muted-foreground italic">No drawbacks found.</p>
-              )}
-
-              {opt.violations.length > 0 && (
-                <div className="mt-3">
-                  <div className="text-[10px] tracking-[0.08em] uppercase text-destructive/80 mb-1">
-                    Conflicts ({opt.violations.length})
-                  </div>
-                  <ul className="space-y-0.5 max-h-24 overflow-y-auto">
-                    {opt.violations.map((v, j) => (
-                      <li key={j} className="text-xs text-destructive/90">· {v.message}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {opt.unplaced.length > 0 && (
-                <div className="mt-3">
-                  <div className="text-[10px] tracking-[0.08em] uppercase text-destructive/80 mb-1">
-                    Could not place
-                  </div>
-                  <ul className="space-y-0.5 max-h-24 overflow-y-auto">
-                    {opt.unplaced.map((u, j) => (
-                      <li key={j} className="text-xs text-muted-foreground">
-                        · {u.course}{u.section > 1 ? ` (Cohort ${cohortLetter(u.section)})` : ""} {u.kind}: {u.reason}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function SnapshotsModal({
@@ -777,7 +713,7 @@ function AvailabilityModal({
             <h2 className="text-sm text-foreground">This semester</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Pick the courses running this semester and the classrooms available for scheduling.
-              The unscheduled tray and Generate only use what's ticked here — set cohorts per course in the tray afterwards.
+              The unscheduled tray and Generate only use what's ticked here. Set cohorts per course in the tray afterwards.
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -790,7 +726,7 @@ function AvailabilityModal({
             title="Courses"
             items={dataset.courses}
             idOf={c => c.code}
-            labelOf={c => `${c.code} — ${c.title}`}
+            labelOf={c => `${c.code} · ${c.title}`}
             selected={courseSel}
             onChange={setCourseSel}
           />
@@ -835,20 +771,24 @@ const UNASSIGNED = "__unassigned__";
 // where the registrar assigns the real lecturer (and optional faculty
 // intern) for each course/cohort already on the grid.
 function LecturersModal({
-  dataset, placements, onAssign, onClose,
+  dataset, placements, onAssign, onAssignAssistant, onClose,
 }: {
   dataset: Dataset;
   placements: Placement[];
   onAssign: (course: string, section: number, facultyId: string) => void;
+  onAssignAssistant: (course: string, section: number, facultyId: string) => void;
   onClose: () => void;
 }) {
   // One row per (course, cohort) that's actually on the grid, so cohorts
-  // can take the same or different lecturers.
+  // can take the same or different lecturers (and interns).
   const rows = useMemo(() => {
-    const seen = new Map<string, { course: string; section: number; current: string }>();
+    const seen = new Map<string, { course: string; section: number; current: string; assistant: string }>();
     for (const p of placements) {
       const key = `${p.course}|${p.section}`;
-      if (!seen.has(key)) seen.set(key, { course: p.course, section: p.section, current: p.faculty });
+      if (!seen.has(key)) seen.set(key, {
+        course: p.course, section: p.section,
+        current: p.faculty, assistant: p.assistant ?? "",
+      });
     }
     return [...seen.values()].sort((a, b) =>
       a.course.localeCompare(b.course) || a.section - b.section);
@@ -857,9 +797,10 @@ function LecturersModal({
   const courseTitle = (code: string) => dataset.courses.find(c => c.code === code)?.title ?? "";
   const multi = (code: string) => (dataset.courses.find(c => c.code === code)?.sections ?? 1) > 1;
 
-  // Lecturers approved for a course come first; interns are listed too so
-  // they can be assigned to assist. The placeholder is never an option.
-  const realFaculty = dataset.faculty.filter(f => f.id !== UNASSIGNED);
+  // Lecturers approved for a course come first; the placeholder is never
+  // an option. Interns (FIs) are the pool for the assistant column.
+  const realFaculty = dataset.faculty.filter(f => f.id !== UNASSIGNED && f.type !== "faculty_intern");
+  const interns = dataset.faculty.filter(f => f.type === "faculty_intern");
   const optionsFor = (code: string) => {
     const approved = realFaculty.filter(f => f.approved_courses.includes(code));
     const rest = realFaculty.filter(f => !f.approved_courses.includes(code));
@@ -871,13 +812,13 @@ function LecturersModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/20 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="relative w-full max-w-[640px] h-[80vh] flex flex-col rounded-xl border border-border bg-background shadow-xl">
+      <div className="relative w-full max-w-[720px] h-[80vh] flex flex-col rounded-xl border border-border bg-background shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
           <div>
             <h2 className="text-sm text-foreground">Assign lecturers</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              The timetable is feasible — now choose who teaches each class.
-              {unassignedCount > 0 && ` ${unassignedCount} still unassigned.`}
+              The timetable is feasible. Now choose who teaches each class, and optionally add a faculty intern to assist.
+              {unassignedCount > 0 && ` ${unassignedCount} still need a lecturer.`}
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -890,6 +831,13 @@ function LecturersModal({
             <p className="text-xs text-muted-foreground italic text-center py-8">
               Nothing on the grid yet. Generate or place classes first.
             </p>
+          )}
+          {rows.length > 0 && (
+            <div className="flex items-center gap-3 px-3 pb-1 text-[10px] tracking-[0.06em] uppercase text-muted-foreground/60">
+              <span className="flex-1">Class</span>
+              <span className="w-[200px]">Lecturer</span>
+              <span className="w-[160px]">Faculty intern</span>
+            </div>
           )}
           {rows.map(r => {
             const { approved, rest } = optionsFor(r.course);
@@ -905,7 +853,7 @@ function LecturersModal({
                   value={r.current}
                   onChange={e => onAssign(r.course, r.section, e.target.value)}
                   className={cn(
-                    "shrink-0 max-w-[260px] px-2 py-1.5 text-xs rounded-lg border bg-background text-foreground transition-colors",
+                    "shrink-0 w-[200px] px-2 py-1.5 text-xs rounded-lg border bg-background text-foreground transition-colors",
                     r.current === UNASSIGNED ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : "border-border",
                   )}
                 >
@@ -913,19 +861,27 @@ function LecturersModal({
                   {approved.length > 0 && (
                     <optgroup label="Approved to teach this">
                       {approved.map(f => (
-                        <option key={f.id} value={f.id}>
-                          {f.name}{f.type === "faculty_intern" ? " (FI)" : ""}
-                        </option>
+                        <option key={f.id} value={f.id}>{f.name}</option>
                       ))}
                     </optgroup>
                   )}
                   <optgroup label="Other faculty">
                     {rest.map(f => (
-                      <option key={f.id} value={f.id}>
-                        {f.name}{f.type === "faculty_intern" ? " (FI)" : ""}
-                      </option>
+                      <option key={f.id} value={f.id}>{f.name}</option>
                     ))}
                   </optgroup>
+                </select>
+                <select
+                  value={r.assistant}
+                  onChange={e => onAssignAssistant(r.course, r.section, e.target.value)}
+                  disabled={!interns.length}
+                  title={!interns.length ? "Add faculty interns on the Faculty page first" : undefined}
+                  className="shrink-0 w-[160px] px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground disabled:opacity-50"
+                >
+                  <option value="">No intern</option>
+                  {interns.map(f => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
                 </select>
               </div>
             );
@@ -957,8 +913,10 @@ export default function Timetable() {
   );
   const [validating, setValidating] = useState(false);
   const [autoFixing, setAutoFixing] = useState(false);
+  const [showConflicts, setShowConflicts] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [genOptions, setGenOptions] = useState<GenerateOption[] | null>(null);
+  const [previewIdx, setPreviewIdx] = useState(0);
   const [genError, setGenError] = useState<string | null>(null);
   const [snapsOpen, setSnapsOpen] = useState(false);
   const [availOpen, setAvailOpen] = useState(false);
@@ -1093,11 +1051,19 @@ export default function Timetable() {
     });
   }, [placements, dataset, filterActive, filterMajor, filterYear, filterFaculty, filterRoom, filterCourse, filterCredits]);
 
-  const slots = useMemo(
-    () => layoutGrid(visiblePlacements, durations),
-    [visiblePlacements, durations],
+  // In preview mode the board shows the draft being previewed (no filters),
+  // otherwise the live, filtered timetable.
+  const previewing = !!genOptions;
+  const boardPlacements = useMemo(
+    () => previewing ? (genOptions[previewIdx]?.placements ?? []) : visiblePlacements,
+    [previewing, genOptions, previewIdx, visiblePlacements],
   );
-  const flagged = new Set(validation?.flagged ?? []);
+
+  const slots = useMemo(
+    () => layoutGrid(boardPlacements, durations),
+    [boardPlacements, durations],
+  );
+  const flagged = new Set(previewing ? [] : validation?.flagged ?? []);
 
   const creditValues = useMemo(
     () => [...new Set((dataset?.courses ?? []).map(c => c.credits))].sort((a, b) => a - b),
@@ -1131,6 +1097,7 @@ export default function Timetable() {
 
   const handleDragEnd = useCallback(async (e: DragEndEvent) => {
     setActiveDrag(null);
+    if (previewing) return;  // board is read-only while previewing a draft
     if (!e.over) return;
     // Week-view cells are "day|minutes"; day-view cells add "|roomId".
     const [day, timeStr, roomId] = String(e.over.id).split("|");
@@ -1146,7 +1113,7 @@ export default function Timetable() {
       const { courseCode, section, kind, index } = src.unscheduled;
       setInspector({ courseCode, section, kind, index, day, startStr: toHHMM(timeMin) });
     }
-  }, [upsertPlacement]);
+  }, [upsertPlacement, previewing]);
 
   const handleValidate = useCallback(async () => {
     if (!engineDataset) return;
@@ -1195,7 +1162,12 @@ export default function Timetable() {
     try {
       const res = await apiGenerate(engineDataset);
       if (res.error) setGenError(res.error);
-      else setGenOptions(res.options);
+      else {
+        // Preview the drafts on the board so the registrar can toggle
+        // between them and see them in place before committing.
+        setGenOptions(res.options);
+        setPreviewIdx(0);
+      }
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "Generation failed");
     } finally {
@@ -1226,12 +1198,13 @@ export default function Timetable() {
 
   // Direct placement from the manual form — no slot checks, the registrar
   // decides; Validate flags any clash afterwards.
-  const handleManualPlace = useCallback((m: { day: string; start: string; room: string; faculty: string }) => {
+  const handleManualPlace = useCallback((m: { day: string; start: string; room: string; faculty: string; assistant: string }) => {
     if (!inspector) return;
     const { courseCode, section, kind, index } = inspector;
     upsertPlacement({
       course: courseCode, section, kind, index,
       day: m.day, start: m.start, room: m.room, faculty: m.faculty,
+      assistant: m.assistant || undefined,
     });
     setInspector(null);
   }, [inspector, upsertPlacement]);
@@ -1241,6 +1214,16 @@ export default function Timetable() {
     for (const p of placements) {
       if (p.course === course && p.section === section && p.faculty !== facultyId) {
         upsertPlacement({ ...p, faculty: facultyId });
+      }
+    }
+  }, [placements, upsertPlacement]);
+
+  // Set (or clear, with "") the assisting faculty intern for a course/cohort.
+  const assignAssistant = useCallback((course: string, section: number, facultyId: string) => {
+    const next = facultyId || undefined;
+    for (const p of placements) {
+      if (p.course === course && p.section === section && (p.assistant ?? undefined) !== next) {
+        upsertPlacement({ ...p, assistant: next });
       }
     }
   }, [placements, upsertPlacement]);
@@ -1320,14 +1303,26 @@ export default function Timetable() {
             Validate
           </button>
           {validation && !validation.valid && (
-            <button
-              onClick={handleAutoFix}
-              disabled={autoFixing}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
-            >
-              {autoFixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
-              {autoFixing ? "Fixing…" : "Auto-fix conflicts"}
-            </button>
+            <>
+              <button
+                onClick={() => setShowConflicts(v => !v)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors",
+                  showConflicts ? "border-destructive/50 bg-destructive/5 text-destructive" : "border-border hover:bg-muted",
+                )}
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {validation.violations.length} conflict{validation.violations.length !== 1 ? "s" : ""}
+              </button>
+              <button
+                onClick={handleAutoFix}
+                disabled={autoFixing}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+              >
+                {autoFixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
+                {autoFixing ? "Fixing…" : "Auto-fix conflicts"}
+              </button>
+            </>
           )}
           <button
             onClick={() => dataset && exportCsv(filterActive ? visiblePlacements : placements, dataset)}
@@ -1370,6 +1365,93 @@ export default function Timetable() {
       {genError && (
         <div className="shrink-0 px-4 sm:px-6 py-2 text-xs text-destructive bg-destructive/5 border-b border-border">
           {genError}
+        </div>
+      )}
+
+      {/* preview banner — toggle between generated drafts on the board */}
+      {previewing && genOptions && (
+        <div className="shrink-0 px-4 sm:px-6 py-2.5 border-b border-primary/30 bg-primary/[0.04]">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-[10px] tracking-[0.08em] uppercase text-primary">Preview</span>
+            <div className="flex rounded-lg border border-border overflow-hidden bg-card text-xs">
+              {genOptions.map((o, i) => (
+                <button
+                  key={o.label}
+                  onClick={() => setPreviewIdx(i)}
+                  className={cn(
+                    "px-3 py-1.5 transition-colors whitespace-nowrap",
+                    i === previewIdx ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {(() => {
+              const o = genOptions[previewIdx];
+              if (!o) return null;
+              return (
+                <span className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                  {o.complete
+                    ? <span className="flex items-center gap-1 text-success"><CheckCircle2 className="h-3.5 w-3.5" /> All classes placed, no conflicts</span>
+                    : <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400"><AlertTriangle className="h-3.5 w-3.5" />
+                        {o.unplaced.length > 0 ? `${o.unplaced.length} could not be placed` : `${o.violations.length} conflict${o.violations.length !== 1 ? "s" : ""}`}
+                      </span>}
+                  <span className="text-muted-foreground/60">·</span>
+                  <span>{o.placements.length} classes placed</span>
+                </span>
+              );
+            })()}
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => { setGenOptions(null); }}
+                className="px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => genOptions[previewIdx] && handleApplyOption(genOptions[previewIdx])}
+                className="px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                Use this timetable
+              </button>
+            </div>
+          </div>
+          {genOptions[previewIdx]?.unplaced.length > 0 && (
+            <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+              Could not place: {genOptions[previewIdx].unplaced.slice(0, 4).map(u =>
+                `${u.course}${u.section > 1 ? ` (Cohort ${cohortLetter(u.section)})` : ""}`).join(", ")}
+              {genOptions[previewIdx].unplaced.length > 4 ? ` and ${genOptions[previewIdx].unplaced.length - 4} more` : ""}.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* conflicts panel — plain-language list, toggled from the header */}
+      {showConflicts && validation && !validation.valid && (
+        <div className="shrink-0 px-4 sm:px-6 py-3 border-b border-border bg-destructive/[0.03] max-h-56 overflow-y-auto">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-foreground">
+              {validation.violations.length} conflict{validation.violations.length !== 1 ? "s" : ""} to resolve
+            </span>
+            <button onClick={() => setShowConflicts(false)} className="text-muted-foreground hover:text-foreground">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <ul className="space-y-1.5">
+            {validation.violations.map((v, i) => (
+              <li key={i} className="flex items-start gap-2.5 text-xs">
+                <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-destructive shrink-0" />
+                <span className="leading-snug">
+                  <span className="text-foreground">{CONFLICT_LABEL[v.code] ?? "Conflict"}:</span>
+                  <span className="text-muted-foreground"> {tidy(v.message)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Tip: try Auto-fix, or click a flagged class (outlined in red) to move it.
+          </p>
         </div>
       )}
 
@@ -1555,7 +1637,9 @@ export default function Timetable() {
                             >
                               <Minus className="h-2.5 w-2.5" />
                             </button>
-                            <span className="w-6 text-center text-[10px] tabular-nums text-foreground">{g.sections}c</span>
+                            <span className="min-w-[58px] text-center text-[10px] tabular-nums text-foreground whitespace-nowrap">
+              {g.sections} cohort{g.sections !== 1 ? "s" : ""}
+            </span>
                             <button
                               onClick={() => setCourseCohorts(g.code, g.sections + 1)}
                               disabled={g.sections >= 26}
@@ -1642,7 +1726,7 @@ export default function Timetable() {
                           facultyName={facultyOf.get(s.placement.faculty)}
                           roomName={roomOf.get(s.placement.room)}
                           flagged={flagged.has(mkKey(s.placement))}
-                          onClick={() => setInspector({
+                          onClick={previewing ? undefined : () => setInspector({
                             courseCode: s.placement.course,
                             section: s.placement.section,
                             kind: s.placement.kind,
@@ -1688,7 +1772,7 @@ export default function Timetable() {
                   </div>
                   {semesterRooms.map(room => {
                     const roomSlots = layoutGrid(
-                      visiblePlacements.filter(p => p.day === dayFocus && p.room === room.id),
+                      boardPlacements.filter(p => p.day === dayFocus && p.room === room.id),
                       durations,
                     );
                     return (
@@ -1760,15 +1844,8 @@ export default function Timetable() {
             dataset={dataset}
             placements={placements}
             onAssign={assignLecturer}
+            onAssignAssistant={assignAssistant}
             onClose={() => setLecturersOpen(false)}
-          />
-        )}
-
-        {genOptions && (
-          <GenerateModal
-            options={genOptions}
-            onApply={handleApplyOption}
-            onClose={() => setGenOptions(null)}
           />
         )}
 
