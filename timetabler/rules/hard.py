@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from itertools import combinations
 
-from ..models import Dataset, Placement, Violation, fmt_time
+from ..models import Dataset, Placement, Violation, fmt_time, is_unassigned
 from .. import timegrid
 
 
@@ -170,6 +170,8 @@ def faculty_clashes(ds: Dataset, placements: list[Placement]) -> list[Violation]
     out = []
     by_fac: dict[str, list[Placement]] = {}
     for p in placements:
+        if is_unassigned(p.faculty):
+            continue  # placeholder isn't a real person; can't double-book
         by_fac.setdefault(p.faculty, []).append(p)
     for fac_id, plist in by_fac.items():
         name = ds.faculty[fac_id].name if fac_id in ds.faculty else fac_id
@@ -199,6 +201,8 @@ def adjunct_availability(ds: Dataset, placements: list[Placement]) -> list[Viola
 def faculty_approval(ds: Dataset, placements: list[Placement]) -> list[Violation]:
     out = []
     for p in placements:
+        if is_unassigned(p.faculty):
+            continue  # a lecturer hasn't been assigned yet — allowed
         fac = ds.faculty.get(p.faculty)
         if fac is None:
             out.append(Violation("H-FAC-3", f"Unknown faculty '{p.faculty}': {p.label()}"))

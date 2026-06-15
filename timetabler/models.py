@@ -9,6 +9,17 @@ WEEKEND = ["Sat", "Sun"]
 
 DURATIONS = {"lecture": 90, "discussion": 60, "lab": 180}
 
+# Sentinel "teacher" used while building a timetable before lecturers are
+# assigned. The engine places rooms and times against it so feasibility can
+# be tested first; the registry assigns real lecturers afterwards. It is
+# approved for everything and never clashes with itself (it is not one real
+# person), so the rules treat it as a placeholder, not a booking.
+UNASSIGNED_FACULTY = "__unassigned__"
+
+
+def is_unassigned(faculty_id: str) -> bool:
+    return faculty_id == UNASSIGNED_FACULTY
+
 
 def parse_time(s: str) -> int:
     h, m = s.split(":")
@@ -181,6 +192,15 @@ class Dataset:
     rules: Rules = field(default_factory=Rules)
     timegrid: Timegrid = field(default_factory=Timegrid)
     durations: dict[str, int] = field(default_factory=lambda: dict(DURATIONS))
+
+    def __post_init__(self):
+        # Always expose the placeholder teacher so name lookups resolve and
+        # the registry can build a timetable before assigning lecturers.
+        if UNASSIGNED_FACULTY not in self.faculty:
+            self.faculty[UNASSIGNED_FACULTY] = Faculty(
+                id=UNASSIGNED_FACULTY, name="Unassigned", type="placeholder",
+                load_target=10_000, max_overload=10_000, max_hours_per_day=24,
+            )
 
     # I made course plans the source of truth when they exist, and kept the
     # old guess-from-course-fields path so older datasets still work.

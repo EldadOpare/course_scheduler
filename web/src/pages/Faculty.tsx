@@ -51,16 +51,24 @@ function groupWindows(windows: Window_[]) {
   return Object.entries(byTime).map(([time, days]) => ({ time, days }));
 }
 
+const TYPE_LABEL: Record<string, string> = {
+  full_time: "Full-time",
+  adjunct: "Adjunct",
+  faculty_intern: "Faculty Intern",
+};
+
 function TypeBadge({ type }: { type: string }) {
-  const isAdjunct = type === "adjunct";
+  const isFullTime = type === "full_time" || !TYPE_LABEL[type];
   return (
     <span className={cn(
       "text-[10px] tracking-[0.05em] uppercase px-2 py-0.5 rounded-full",
-      isAdjunct
-        ? "bg-muted text-muted-foreground"
-        : "bg-primary/10 text-primary",
+      type === "faculty_intern"
+        ? "bg-sky-500/10 text-sky-600 dark:text-sky-400"
+        : isFullTime
+          ? "bg-primary/10 text-primary"
+          : "bg-muted text-muted-foreground",
     )}>
-      {isAdjunct ? "Adjunct" : "Full-time"}
+      {TYPE_LABEL[type] ?? "Full-time"}
     </span>
   );
 }
@@ -258,19 +266,19 @@ function EditModal({ draft, setDraft, courseCodes, isNew, onSave, onDelete, onCl
               </Field>
               <Field label="Type">
                 <div className="flex gap-2">
-                  {(["full_time", "adjunct"] as const).map(t => (
+                  {(["full_time", "adjunct", "faculty_intern"] as const).map(t => (
                     <button
                       key={t} type="button" onClick={() => set("type", t)}
                       className={cn(
-                        "flex-1 py-2 text-xs rounded-lg border transition-all duration-150",
+                        "flex-1 py-2 text-[11px] rounded-lg border transition-all duration-150",
                         draft.type === t
-                          ? t === "adjunct"
-                            ? "bg-muted border-border text-foreground"
-                            : "bg-primary/10 border-primary/30 text-primary"
+                          ? t === "full_time"
+                            ? "bg-primary/10 border-primary/30 text-primary"
+                            : "bg-muted border-border text-foreground"
                           : "border-border text-muted-foreground hover:bg-muted/60",
                       )}
                     >
-                      {t === "full_time" ? "Full-time" : "Adjunct"}
+                      {t === "full_time" ? "Full-time" : t === "adjunct" ? "Adjunct" : "Faculty Intern"}
                     </button>
                   ))}
                 </div>
@@ -386,13 +394,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-type Filter = "all" | "full_time" | "adjunct";
+type Filter = "all" | "full_time" | "adjunct" | "faculty_intern";
 type View = "cards" | "table";
 
 export default function FacultyPage() {
   const { dataset, upsertFaculty, removeFaculty } = useTimetable();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [courseFilter, setCourseFilter] = useState("");
   const [view, setView] = useState<View>("table");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
@@ -416,7 +425,8 @@ export default function FacultyPage() {
     const q = search.toLowerCase();
     const filtered = faculty.filter(f =>
       (!q || f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q) || f.approved_courses.some(c => c.toLowerCase().includes(q)))
-      && (filter === "all" || f.type === filter),
+      && (filter === "all" || f.type === filter)
+      && (!courseFilter || f.approved_courses.includes(courseFilter)),
     );
     return [...filtered].sort((a, b) => {
       let av: string | number, bv: string | number;
@@ -426,7 +436,7 @@ export default function FacultyPage() {
       if (typeof av === "string") return sortAsc ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
       return sortAsc ? (av - (bv as number)) : ((bv as number) - av);
     });
-  }, [faculty, search, filter, sortKey, sortAsc]);
+  }, [faculty, search, filter, courseFilter, sortKey, sortAsc]);
 
   function openEdit(f: Faculty) {
     setDraft({ ...f, availability: [...f.availability], preferred_times: [...f.preferred_times] });
@@ -444,7 +454,7 @@ export default function FacultyPage() {
     { label: "Total", value: faculty.length },
     { label: "Full-time", value: faculty.filter(f => f.type === "full_time").length },
     { label: "Adjuncts", value: faculty.filter(f => f.type === "adjunct").length },
-    { label: "With courses", value: faculty.filter(f => f.approved_courses.length > 0).length },
+    { label: "Faculty interns", value: faculty.filter(f => f.type === "faculty_intern").length },
   ];
 
   const thCls = (key: SortKey) => cn(
@@ -497,15 +507,29 @@ export default function FacultyPage() {
           </div>
 
           <div className="flex rounded-lg border border-border overflow-hidden bg-card text-xs">
-            {(["all", "full_time", "adjunct"] as Filter[]).map(f => (
+            {(["all", "full_time", "adjunct", "faculty_intern"] as Filter[]).map(f => (
               <button
                 key={f} onClick={() => setFilter(f)}
-                className={cn("px-3 py-2 transition-colors", filter === f ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+                className={cn("px-3 py-2 transition-colors whitespace-nowrap", filter === f ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
               >
-                {f === "all" ? "All" : f === "full_time" ? "Full-time" : "Adjuncts"}
+                {f === "all" ? "All" : f === "full_time" ? "Full-time" : f === "adjunct" ? "Adjuncts" : "FIs"}
               </button>
             ))}
           </div>
+
+          <select
+            value={courseFilter}
+            onChange={e => setCourseFilter(e.target.value)}
+            className={cn(
+              "px-2 py-2 text-xs rounded-lg border bg-card transition-colors max-w-44",
+              courseFilter ? "border-primary/50 text-primary" : "border-border text-muted-foreground",
+            )}
+          >
+            <option value="">All courses</option>
+            {courseCodes.map(code => (
+              <option key={code} value={code}>{code}</option>
+            ))}
+          </select>
 
           <div className="flex rounded-lg border border-border overflow-hidden bg-card">
             <button

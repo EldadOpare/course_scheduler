@@ -16,7 +16,7 @@ const COURSE_TYPES = [
   { value: "non_major_elective", label: "Non-Major Elective" },
 ];
 
-const PROGRAMS = ["csis", "hss", "ba", "engr", "mba"];
+const PROGRAMS = ["csis", "hss", "ba", "econ", "engr", "law", "mba"];
 
 const EMPTY: Course = {
   code: "", title: "", type: "liberal_arts_core", program: "csis", level: 100,

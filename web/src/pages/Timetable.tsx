@@ -8,7 +8,7 @@ import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import {
   CalendarDays, ChevronDown, ChevronRight, X, Loader2, Search, Check,
   Wand2, Download, CheckCircle2, AlertTriangle, Bookmark, FilterX, Trash2, CheckCheck,
-  ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon,
+  ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon, UserCheck,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import {
@@ -148,7 +148,7 @@ function UnscheduledItem({
       )}
     >
       <span className="truncate text-muted-foreground">
-        {cohort ? `Cohort ${cohort}` : "Session"}{meetingNo ? ` · ${meetingNo}` : ""}
+        {cohort ? `Cohort ${cohort}` : "Class"}{meetingNo ? ` · ${meetingNo}` : ""}
       </span>
       <span className={cn(
         "px-1.5 py-0.5 rounded text-[9px] tracking-[0.05em] uppercase shrink-0 ml-1",
@@ -728,6 +728,122 @@ function AvailabilityModal({
   );
 }
 
+const UNASSIGNED = "__unassigned__";
+
+// After a draft is generated we know the timetable is feasible; this is
+// where the registrar assigns the real lecturer (and optional faculty
+// intern) for each course/cohort already on the grid.
+function LecturersModal({
+  dataset, placements, onAssign, onClose,
+}: {
+  dataset: Dataset;
+  placements: Placement[];
+  onAssign: (course: string, section: number, facultyId: string) => void;
+  onClose: () => void;
+}) {
+  // One row per (course, cohort) that's actually on the grid, so cohorts
+  // can take the same or different lecturers.
+  const rows = useMemo(() => {
+    const seen = new Map<string, { course: string; section: number; current: string }>();
+    for (const p of placements) {
+      const key = `${p.course}|${p.section}`;
+      if (!seen.has(key)) seen.set(key, { course: p.course, section: p.section, current: p.faculty });
+    }
+    return [...seen.values()].sort((a, b) =>
+      a.course.localeCompare(b.course) || a.section - b.section);
+  }, [placements]);
+
+  const courseTitle = (code: string) => dataset.courses.find(c => c.code === code)?.title ?? "";
+  const multi = (code: string) => (dataset.courses.find(c => c.code === code)?.sections ?? 1) > 1;
+
+  // Lecturers approved for a course come first; interns are listed too so
+  // they can be assigned to assist. The placeholder is never an option.
+  const realFaculty = dataset.faculty.filter(f => f.id !== UNASSIGNED);
+  const optionsFor = (code: string) => {
+    const approved = realFaculty.filter(f => f.approved_courses.includes(code));
+    const rest = realFaculty.filter(f => !f.approved_courses.includes(code));
+    return { approved, rest };
+  };
+
+  const unassignedCount = rows.filter(r => r.current === UNASSIGNED).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-foreground/20 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative w-full max-w-[640px] h-[80vh] flex flex-col rounded-xl border border-border bg-background shadow-xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div>
+            <h2 className="text-sm text-foreground">Assign lecturers</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              The timetable is feasible — now choose who teaches each class.
+              {unassignedCount > 0 && ` ${unassignedCount} still unassigned.`}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
+          {!rows.length && (
+            <p className="text-xs text-muted-foreground italic text-center py-8">
+              Nothing on the grid yet. Generate or place classes first.
+            </p>
+          )}
+          {rows.map(r => {
+            const { approved, rest } = optionsFor(r.course);
+            return (
+              <div key={`${r.course}|${r.section}`} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs text-foreground">
+                    {r.course}{multi(r.course) ? ` · Cohort ${cohortLetter(r.section)}` : ""}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground truncate">{courseTitle(r.course)}</div>
+                </div>
+                <select
+                  value={r.current}
+                  onChange={e => onAssign(r.course, r.section, e.target.value)}
+                  className={cn(
+                    "shrink-0 max-w-[260px] px-2 py-1.5 text-xs rounded-lg border bg-background text-foreground transition-colors",
+                    r.current === UNASSIGNED ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : "border-border",
+                  )}
+                >
+                  <option value={UNASSIGNED}>Unassigned</option>
+                  {approved.length > 0 && (
+                    <optgroup label="Approved to teach this">
+                      {approved.map(f => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}{f.type === "faculty_intern" ? " (FI)" : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="Other faculty">
+                    {rest.map(f => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}{f.type === "faculty_intern" ? " (FI)" : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-5 py-4 border-t border-border flex items-center justify-end shrink-0">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Timetable() {
   const {
     placements, dataset, validation, upsertPlacement, removePlacement, applyDraft, setValidation,
@@ -744,6 +860,7 @@ export default function Timetable() {
   const [genError, setGenError] = useState<string | null>(null);
   const [snapsOpen, setSnapsOpen] = useState(false);
   const [availOpen, setAvailOpen] = useState(false);
+  const [lecturersOpen, setLecturersOpen] = useState(false);
   const [view, setView] = useState<"week" | "day">("week");
   const [dayFocus, setDayFocus] = useState("Mon");
   const [filterMajor, setFilterMajor] = useState("");
@@ -958,6 +1075,11 @@ export default function Timetable() {
   const handleApplyOption = useCallback((opt: GenerateOption) => {
     applyDraft(opt.placements);
     setGenOptions(null);
+    // Feasibility is proven; nudge straight into assigning lecturers when
+    // the draft used the placeholder for any class.
+    if (opt.placements.some(p => p.faculty === "__unassigned__")) {
+      setLecturersOpen(true);
+    }
   }, [applyDraft]);
 
   const handlePlaceOption = useCallback(async (opt: PlaceOption) => {
@@ -970,6 +1092,15 @@ export default function Timetable() {
     });
     setInspector(null);
   }, [inspector, upsertPlacement]);
+
+  // Set the lecturer for every meeting of one course/cohort at once.
+  const assignLecturer = useCallback((course: string, section: number, facultyId: string) => {
+    for (const p of placements) {
+      if (p.course === course && p.section === section && p.faculty !== facultyId) {
+        upsertPlacement({ ...p, faculty: facultyId });
+      }
+    }
+  }, [placements, upsertPlacement]);
 
   const scheduled = useMemo(() => new Set(placements.map(mkKey)), [placements]);
 
@@ -1052,6 +1183,15 @@ export default function Timetable() {
           >
             <Download className="h-3.5 w-3.5" />
             Export CSV
+          </button>
+          <button
+            onClick={() => setLecturersOpen(true)}
+            disabled={!dataset || !placements.length}
+            title={!placements.length ? "Place or generate classes first" : undefined}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            <UserCheck className="h-3.5 w-3.5" />
+            Lecturers
           </button>
           <button
             onClick={() => setSnapsOpen(true)}
@@ -1457,6 +1597,15 @@ export default function Timetable() {
               setAvailOpen(false);
             }}
             onClose={() => setAvailOpen(false)}
+          />
+        )}
+
+        {lecturersOpen && dataset && (
+          <LecturersModal
+            dataset={dataset}
+            placements={placements}
+            onAssign={assignLecturer}
+            onClose={() => setLecturersOpen(false)}
           />
         )}
 

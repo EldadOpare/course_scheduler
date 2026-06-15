@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import engine, timegrid
-from .models import Dataset, Placement, fmt_time
+from .models import Dataset, Placement, fmt_time, UNASSIGNED_FACULTY
 
 
 @dataclass
@@ -31,7 +31,11 @@ def candidate_faculty(ds: Dataset, placements: list[Placement],
                 if p.course == course and p.section == section}
     if attached:
         return sorted(attached)
-    return sorted(f.id for f in ds.faculty.values() if course in f.approved_courses)
+    approved = sorted(f.id for f in ds.faculty.values()
+                      if course in f.approved_courses)
+    # No lecturer approved yet → offer the slot against the placeholder so
+    # the room/time can still be chosen and a lecturer assigned later.
+    return approved or [UNASSIGNED_FACULTY]
 
 
 def suggest(ds: Dataset, placements: list[Placement], course_code: str,

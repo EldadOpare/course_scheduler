@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from itertools import combinations
 
 from . import engine, timegrid
-from .models import Course, Dataset, Penalty, Placement, Violation
+from .models import Course, Dataset, Penalty, Placement, Violation, UNASSIGNED_FACULTY, is_unassigned
 from .rules import soft
 from .rules.soft import ENGINEERING_SPACES
 
@@ -154,6 +154,10 @@ def _pairs_still_ok(idx: dict[str, dict[int, list[Placement]]],
 def _conflicts(ds: Dataset, placed: list[Placement], cand: Placement,
                fac_minutes: dict[tuple[str, str], int],
                fac_sections: dict[str, set[tuple[str, int]]]) -> bool:
+    # The placeholder teacher carries no approval/availability/load limits
+    # and never clashes with itself — only its room can clash.
+    if is_unassigned(cand.faculty):
+        return any(p.overlaps(cand) and p.room == cand.room for p in placed)
     fac = ds.faculty.get(cand.faculty)
     if fac is None or cand.course not in fac.approved_courses:
         return True
@@ -216,6 +220,10 @@ def _weights(overrides: dict[str, int]) -> dict[str, int]:
 def _teacher_order(ds: Dataset, course: str,
                    fac_sections: dict[str, set[tuple[str, int]]]) -> list[str]:
     approved = [f for f in ds.faculty.values() if course in f.approved_courses]
+    # No approved lecturer → schedule against the placeholder so the draft
+    # still places the meeting; a real lecturer is assigned afterwards.
+    if not approved:
+        return [UNASSIGNED_FACULTY]
     return [f.id for f in sorted(
         approved,
         key=lambda f: (len(fac_sections.get(f.id, ())) - f.load_target,
