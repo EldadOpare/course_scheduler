@@ -1,5 +1,6 @@
 import ashLogo from "@/assets/ash_logo.png";
 const CRIMSON = "hsl(358 48% 45%)";
+const FONT = '"Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 export default function AppLoader({ exiting }: { exiting?: boolean }) {
   return (
@@ -32,33 +33,37 @@ export default function AppLoader({ exiting }: { exiting?: boolean }) {
         {/* Vertical rule */}
         <div className="ldr-rule" style={{
           width: "1px",
-          height: "80px",
+          height: "96px",
           background: CRIMSON,
           opacity: 0.2,
         }} />
 
         {/* Right: App name */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          <div style={{ overflow: "hidden" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          {/* paddingBottom on the mask leaves room for descenders (the "g"
+              in Scheduling) so the reveal doesn't clip the letters */}
+          <div style={{ overflow: "hidden", paddingBottom: "0.14em" }}>
             <span className="ldr-line1" style={{
               display: "block",
-              fontSize: "1.75rem",
-              fontWeight: 500,
-              letterSpacing: "0.02em",
+              fontFamily: FONT,
+              fontSize: "2.1rem",
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+              lineHeight: 1.15,
               color: "hsl(var(--foreground))",
-              lineHeight: 1,
             }}>
               Course
             </span>
           </div>
-          <div style={{ overflow: "hidden" }}>
+          <div style={{ overflow: "hidden", paddingBottom: "0.14em" }}>
             <span className="ldr-line2" style={{
               display: "block",
-              fontSize: "1.75rem",
+              fontFamily: FONT,
+              fontSize: "2.1rem",
               fontWeight: 300,
-              letterSpacing: "0.02em",
+              letterSpacing: "-0.02em",
+              lineHeight: 1.15,
               color: "hsl(var(--muted-foreground))",
-              lineHeight: 1,
             }}>
               Scheduling System
             </span>
