@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type {
-  Dataset, Placement, SchedulingRules, Timegrid, TimetableSnapshot,
+  Dataset, Placement, SchedulingRules, Timegrid, TimetableSnapshot, TimetableSession,
 } from "@/types";
 import { DEFAULT_RULES } from "@/types";
 
@@ -73,45 +73,72 @@ export async function loadDataset(): Promise<Dataset | null> {
   };
 }
 
-// Which courses / classrooms the registrar marked as available this
-// semester. A missing row means no selection has been made yet (= all).
-export async function loadAvailability(): Promise<{
-  courses: Record<string, number> | null;
-  rooms: string[] | null;
-}> {
-  if (!SUPABASE_CONFIGURED) return { courses: null, rooms: null };
-  const { data } = await supabase
-    .from("settings")
-    .select("*")
-    .in("key", ["active_courses", "active_rooms"]);
-  const coursesVal = data?.find(s => s.key === "active_courses")?.value as
-    { map?: Record<string, number> | null; items?: string[] | null } | undefined;
-  // New shape is { map }. Older saves used { items: [...] }; migrate those
-  // by defaulting every listed course to a single cohort.
-  let courses: Record<string, number> | null = coursesVal?.map ?? null;
-  if (!courses && coursesVal?.items?.length) {
-    courses = Object.fromEntries(coursesVal.items.map(c => [c, 1]));
-  }
-  const roomsVal = data?.find(s => s.key === "active_rooms")?.value as
-    { items?: string[] | null } | undefined;
-  return { courses, rooms: roomsVal?.items ?? null };
+function rowToSession(r: Record<string, unknown>): TimetableSession {
+  return {
+    id: r.id as string,
+    label: (r.label as string) ?? "Untitled",
+    active_courses: (r.active_courses as Record<string, number> | null) ?? null,
+    active_rooms: (r.active_rooms as string[] | null) ?? null,
+    published_at: (r.published_at as string | null) ?? null,
+    created_at: r.created_at as string,
+  };
 }
 
-export async function ensureDefaultSession(): Promise<string> {
-  if (!SUPABASE_CONFIGURED) return "offline";
+// All sessions, newest first. Ensures at least one exists so the app
+// always has a board to show.
+export async function listSessions(): Promise<TimetableSession[]> {
+  if (!SUPABASE_CONFIGURED) return [];
   const { data } = await supabase
     .from("timetable_sessions")
-    .select("id")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
-  if (data?.id) return data.id;
-  const { data: created } = await supabase
+    .select("*")
+    .order("created_at", { ascending: false });
+  let rows = data ?? [];
+  if (!rows.length) {
+    const { data: created } = await supabase
+      .from("timetable_sessions")
+      .insert({ label: "Semester 1" })
+      .select("*")
+      .single();
+    if (created) rows = [created];
+  }
+  return rows.map(rowToSession);
+}
+
+export async function createSession(label: string): Promise<TimetableSession | null> {
+  if (!SUPABASE_CONFIGURED) return null;
+  const { data } = await supabase
     .from("timetable_sessions")
-    .insert({ label: "Session 1" })
-    .select("id")
+    .insert({ label })
+    .select("*")
     .single();
-  return created?.id ?? "offline";
+  return data ? rowToSession(data) : null;
+}
+
+export async function renameSession(id: string, label: string): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  await supabase.from("timetable_sessions").update({ label }).eq("id", id);
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  await supabase.from("timetable_sessions").delete().eq("id", id);
+}
+
+export async function setSessionPublished(id: string, published: boolean): Promise<string | null> {
+  if (!SUPABASE_CONFIGURED) return null;
+  const published_at = published ? new Date().toISOString() : null;
+  await supabase.from("timetable_sessions").update({ published_at }).eq("id", id);
+  return published_at;
+}
+
+export async function saveSessionPicks(
+  id: string,
+  active_courses: Record<string, number> | null,
+  active_rooms: string[] | null,
+): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  await supabase.from("timetable_sessions")
+    .update({ active_courses, active_rooms }).eq("id", id);
 }
 
 export async function loadSessionPlacements(sessionId: string) {

@@ -1,7 +1,11 @@
 import { create } from "zustand";
-import { supabase, SUPABASE_CONFIGURED } from "@/lib/supabase";
+import {
+  supabase, SUPABASE_CONFIGURED, saveSessionPicks, setSessionPublished,
+  createSession as createSessionRow, renameSession as renameSessionRow,
+  deleteSession as deleteSessionRow, loadSessionPlacements,
+} from "@/lib/supabase";
 import type {
-  Dataset, Placement, ValidationResult, SchedulingRules,
+  Dataset, Placement, ValidationResult, SchedulingRules, TimetableSession,
   Faculty, Room, Course, YearGroup, Major, AcademicSemester, CoursePlan,
 } from "@/types";
 import { mkKey } from "@/types";
@@ -13,11 +17,13 @@ interface TimetableState {
   semesterId: string | null;
   isLoading: boolean;
 
-  // What's running this semester. null = nothing chosen yet (the
+  // Named sessions the registry switches between, and the one in view.
+  sessions: TimetableSession[];
+  currentSession: TimetableSession | null;
+
+  // What's running in the current session. null = nothing chosen yet (the
   // unscheduled tray starts empty — the registrar picks courses in).
-  // activeCourses maps a course code to the number of cohorts/sections
-  // it should run this semester, so cohort count is configurable per
-  // course after it's brought in.
+  // activeCourses maps a course code to the number of cohorts/sections.
   activeCourses: Record<string, number> | null;
   activeRooms: string[] | null;
 
@@ -27,6 +33,15 @@ interface TimetableState {
   setSemesterId: (id: string) => void;
   setActiveCourses: (courses: Record<string, number> | null) => void;
   setActiveRooms:   (ids: string[] | null) => void;
+
+  // Session management.
+  setSessions:    (s: TimetableSession[]) => void;
+  setCurrentSession: (s: TimetableSession | null) => void;
+  switchSession:  (id: string) => Promise<void>;
+  newSession:     (label: string) => Promise<void>;
+  renameCurrentSession: (label: string) => void;
+  deleteCurrentSession: () => Promise<void>;
+  setPublished:   (published: boolean) => void;
 
   upsertPlacement: (p: Placement) => void;
   removePlacement: (key: string) => void;
@@ -55,6 +70,8 @@ export const useTimetable = create<TimetableState>((set, get) => ({
   validation:  null,
   semesterId:  null,
   isLoading:   false,
+  sessions:    [],
+  currentSession: null,
   activeCourses: null,
   activeRooms:   null,
 
@@ -62,20 +79,89 @@ export const useTimetable = create<TimetableState>((set, get) => ({
   setValidation: (v)  => set({ validation: v }),
   setSemesterId: (id) => set({ semesterId: id }),
   setPlacements: (placements) => set({ placements }),
+  setSessions:   (sessions) => set({ sessions }),
+  setCurrentSession: (currentSession) => set({
+    currentSession,
+    semesterId: currentSession?.id ?? get().semesterId,
+    activeCourses: currentSession?.active_courses ?? null,
+    activeRooms: currentSession?.active_rooms ?? null,
+  }),
 
+  // Picks live on the current session row so each session keeps its own.
   setActiveCourses: (courses) => {
     set({ activeCourses: courses });
-    if (SUPABASE_CONFIGURED) {
-      supabase.from("settings")
-        .upsert({ key: "active_courses", value: { map: courses } }).then();
+    const s = get().currentSession;
+    if (s) {
+      const updated = { ...s, active_courses: courses };
+      set({ currentSession: updated, sessions: get().sessions.map(x => x.id === s.id ? updated : x) });
+      if (SUPABASE_CONFIGURED) saveSessionPicks(s.id, courses, get().activeRooms);
     }
   },
   setActiveRooms: (ids) => {
     set({ activeRooms: ids });
-    if (SUPABASE_CONFIGURED) {
-      supabase.from("settings")
-        .upsert({ key: "active_rooms", value: { items: ids } }).then();
+    const s = get().currentSession;
+    if (s) {
+      const updated = { ...s, active_rooms: ids };
+      set({ currentSession: updated, sessions: get().sessions.map(x => x.id === s.id ? updated : x) });
+      if (SUPABASE_CONFIGURED) saveSessionPicks(s.id, get().activeCourses, ids);
     }
+  },
+
+  switchSession: async (id) => {
+    const s = get().sessions.find(x => x.id === id);
+    if (!s) return;
+    set({
+      currentSession: s, semesterId: s.id,
+      activeCourses: s.active_courses ?? null,
+      activeRooms: s.active_rooms ?? null,
+      validation: null, placements: [],
+    });
+    const saved = await loadSessionPlacements(s.id);
+    // Only keep if we're still on this session (avoids races when switching fast).
+    if (get().semesterId === s.id) set({ placements: saved });
+  },
+
+  newSession: async (label) => {
+    const created = await createSessionRow(label);
+    if (!created) return;
+    set({
+      sessions: [created, ...get().sessions],
+      currentSession: created, semesterId: created.id,
+      activeCourses: null, activeRooms: null,
+      placements: [], validation: null,
+    });
+  },
+
+  renameCurrentSession: (label) => {
+    const s = get().currentSession;
+    if (!s) return;
+    const updated = { ...s, label };
+    set({ currentSession: updated, sessions: get().sessions.map(x => x.id === s.id ? updated : x) });
+    if (SUPABASE_CONFIGURED) renameSessionRow(s.id, label);
+  },
+
+  deleteCurrentSession: async () => {
+    const s = get().currentSession;
+    const rest = get().sessions.filter(x => x.id !== s?.id);
+    if (!s) return;
+    if (SUPABASE_CONFIGURED) await deleteSessionRow(s.id);
+    if (rest.length) {
+      set({ sessions: rest });
+      await get().switchSession(rest[0].id);
+    } else {
+      // Always keep at least one session to work in.
+      set({ sessions: [] });
+      await get().newSession("Semester 1");
+    }
+  },
+
+  setPublished: (published) => {
+    const s = get().currentSession;
+    if (!s) return;
+    const published_at = published ? new Date().toISOString() : null;
+    const updated = { ...s, published_at };
+    set({ currentSession: updated, sessions: get().sessions.map(x => x.id === s.id ? updated : x) });
+    if (SUPABASE_CONFIGURED) setSessionPublished(s.id, published);
   },
 
   upsertPlacement: (p) => {

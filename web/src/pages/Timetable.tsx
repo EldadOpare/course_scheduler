@@ -9,6 +9,7 @@ import {
   CalendarDays, ChevronDown, ChevronRight, X, Loader2, Search, Check,
   Wand2, Download, CheckCircle2, AlertTriangle, Bookmark, FilterX, Trash2, CheckCheck,
   ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon, UserCheck, Wrench,
+  Pencil, Printer, Lock,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import {
@@ -16,7 +17,6 @@ import {
   place as apiPlace, generate as apiGenerate,
 } from "@/lib/api";
 import { listSnapshots, saveSnapshot, deleteSnapshot } from "@/lib/supabase";
-import PageHeader from "@/components/PageHeader";
 import StatusBadge from "@/components/StatusBadge";
 import type {
   Placement, PlaceOption, Dataset, GenerateOption, TimetableSnapshot,
@@ -464,6 +464,67 @@ function exportCsv(placements: Placement[], dataset: Dataset) {
   a.download = "timetable-camu.csv";
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// Open a clean, printable week view in a new window. The browser's print
+// dialog handles "Save as PDF", so this covers both print and PDF.
+function printTimetable(placements: Placement[], dataset: Dataset, title: string) {
+  const esc = (s: string) => s.replace(/[&<>"]/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+  const roomOf = new Map(dataset.rooms.map(r => [r.id, r.name]));
+  const facOf = new Map(dataset.faculty.map(f => [f.id, f.name]));
+  const courseOf = new Map(dataset.courses.map(c => [c.code, c]));
+  const days = dataset.timegrid?.weekdays ?? ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const DAY: Record<string, string> = {
+    Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday",
+    Fri: "Friday", Sat: "Saturday", Sun: "Sunday",
+  };
+
+  const cols = days.map(d => {
+    const list = placements
+      .filter(p => p.day === d)
+      .sort((a, b) => pmTime(a.start) - pmTime(b.start));
+    const cells = list.map(p => {
+      const dur = dataset.durations[p.kind] ?? 90;
+      const cohorts = courseOf.get(p.course)?.sections ?? 1;
+      const cohort = cohorts > 1 ? ` (Cohort ${cohortLetter(p.section)})` : "";
+      const fac = p.faculty && !p.faculty.startsWith("__") ? facOf.get(p.faculty) ?? "" : "Unassigned";
+      const fi = p.assistant ? ` + ${facOf.get(p.assistant) ?? "FI"}` : "";
+      return `<div class="cls">
+        <div class="t">${esc(p.start)} to ${esc(ftTime(pmTime(p.start) + dur))}</div>
+        <div class="c">${esc(p.course)}${esc(cohort)}</div>
+        <div class="m">${esc(roomOf.get(p.room) ?? p.room)}</div>
+        <div class="m">${esc(fac + fi)}</div>
+      </div>`;
+    }).join("") || `<div class="empty">No classes</div>`;
+    return `<div class="col"><h2>${esc(DAY[d] ?? d)}</h2>${cells}</div>`;
+  }).join("");
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, system-ui, sans-serif; color: #1a1a1a; margin: 24px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .sub { color: #666; font-size: 12px; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(${days.length}, 1fr); gap: 10px; }
+    .col h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #555;
+              border-bottom: 1px solid #ddd; padding-bottom: 4px; margin: 0 0 8px; }
+    .cls { border: 1px solid #ddd; border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; page-break-inside: avoid; }
+    .cls .t { font-size: 10px; color: #777; }
+    .cls .c { font-weight: 600; font-size: 12px; }
+    .cls .m { font-size: 10px; color: #555; }
+    .empty { color: #bbb; font-size: 11px; }
+    @media print { body { margin: 0; } }
+  </style></head>
+  <body>
+    <h1>${esc(title)}</h1>
+    <div class="sub">${placements.length} classes · generated ${new Date().toLocaleDateString()}</div>
+    <div class="grid">${cols}</div>
+    <script>window.onload = () => window.print();</script>
+  </body></html>`;
+
+  const w = window.open("", "_blank");
+  if (w) { w.document.write(html); w.document.close(); }
 }
 
 function SnapshotsModal({
@@ -975,7 +1036,10 @@ export default function Timetable() {
   const {
     placements, dataset, validation, upsertPlacement, removePlacement, applyDraft, setValidation,
     activeCourses, activeRooms, setActiveCourses, setActiveRooms,
+    sessions, currentSession, switchSession, newSession, renameCurrentSession,
+    deleteCurrentSession, setPublished,
   } = useTimetable();
+  const published = !!currentSession?.published_at;
   const [activeDrag, setActiveDrag] = useState<Placement | null>(null);
   const [inspector, setInspector] = useState<InspectorTarget | null>(null);
   const [trayOpen, setTrayOpen] = useState(
@@ -1168,7 +1232,7 @@ export default function Timetable() {
 
   const handleDragEnd = useCallback(async (e: DragEndEvent) => {
     setActiveDrag(null);
-    if (previewing) return;  // board is read-only while previewing a draft
+    if (previewing || published) return;  // read-only while previewing or published
     if (!e.over) return;
     // Week-view cells are "day|minutes"; day-view cells add "|roomId".
     const [day, timeStr, roomId] = String(e.over.id).split("|");
@@ -1184,7 +1248,7 @@ export default function Timetable() {
       const { courseCode, section, kind, index } = src.unscheduled;
       setInspector({ courseCode, section, kind, index, day, startStr: toHHMM(timeMin) });
     }
-  }, [upsertPlacement, previewing]);
+  }, [upsertPlacement, previewing, published]);
 
   const handleValidate = useCallback(async () => {
     if (!engineDataset) return;
@@ -1363,7 +1427,64 @@ export default function Timetable() {
 
       {/* header */}
       <div className="shrink-0 px-4 sm:px-6 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap bg-background">
-        <PageHeader icon={CalendarDays} title="Timetable" subtitle="Drag meetings onto the grid" className="mb-0" />
+        {/* session switcher */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <CalendarDays className="h-5 w-5 text-primary shrink-0" />
+          <div className="relative inline-flex items-center">
+            <select
+              value={currentSession?.id ?? ""}
+              onChange={e => switchSession(e.target.value)}
+              disabled={!sessions.length}
+              className="appearance-none text-sm font-medium text-foreground bg-transparent pr-6 pl-1 py-1 outline-none cursor-pointer max-w-[220px] truncate"
+            >
+              {!sessions.length && <option value="">Timetable</option>}
+              {sessions.map(s => (
+                <option key={s.id} value={s.id}>{s.label}{s.published_at ? " (published)" : ""}</option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-1 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          </div>
+          <button
+            onClick={async () => {
+              const label = window.prompt("Name the new timetable", "New timetable");
+              if (label && label.trim()) await newSession(label.trim());
+            }}
+            title="New timetable"
+            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"
+          >
+            <PlusIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => {
+              if (!currentSession) return;
+              const label = window.prompt("Rename timetable", currentSession.label);
+              if (label && label.trim()) renameCurrentSession(label.trim());
+            }}
+            disabled={!currentSession}
+            title="Rename"
+            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors disabled:opacity-40"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => {
+              if (!currentSession) return;
+              if (window.confirm(`Delete "${currentSession.label}" and its placements? This cannot be undone.`)) {
+                deleteCurrentSession();
+              }
+            }}
+            disabled={!currentSession || sessions.length <= 1}
+            title={sessions.length <= 1 ? "Keep at least one timetable" : "Delete this timetable"}
+            className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+          {published && (
+            <span className="ml-1 flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] tracking-[0.04em] uppercase">
+              <CheckCircle2 className="h-3 w-3" /> Published
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <StatusBadge
             valid={validation?.valid ?? null}
@@ -1372,7 +1493,7 @@ export default function Timetable() {
           />
           <button
             onClick={() => setAvailOpen(true)}
-            disabled={!dataset}
+            disabled={!dataset || published}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
           >
             <ListChecks className="h-3.5 w-3.5" />
@@ -1405,7 +1526,7 @@ export default function Timetable() {
               </button>
               <button
                 onClick={handleAutoFix}
-                disabled={autoFixing}
+                disabled={autoFixing || published}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
               >
                 {autoFixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
@@ -1422,14 +1543,24 @@ export default function Timetable() {
             Export CSV
           </button>
           <button
-            onClick={() => setLecturersOpen(true)}
+            onClick={() => dataset && printTimetable(placements, dataset, currentSession?.label ?? "Timetable")}
             disabled={!dataset || !placements.length}
-            title={!placements.length ? "Place or generate classes first" : undefined}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
           >
-            <UserCheck className="h-3.5 w-3.5" />
-            Lecturers
+            <Printer className="h-3.5 w-3.5" />
+            Print
           </button>
+          {!published && (
+            <button
+              onClick={() => setLecturersOpen(true)}
+              disabled={!dataset || !placements.length}
+              title={!placements.length ? "Place or generate classes first" : undefined}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              Lecturers
+            </button>
+          )}
           <button
             onClick={() => setSnapsOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
@@ -1437,25 +1568,54 @@ export default function Timetable() {
             <Bookmark className="h-3.5 w-3.5" />
             Saved
           </button>
-          <button
-            onClick={() => setClearOpen(true)}
-            disabled={!dataset || (!placements.length && !activeCourses && !activeRooms)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-50"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Clear
-          </button>
-          <button
-            onClick={handleGenerate}
-            disabled={generating || !semesterCourses.length}
-            title={!semesterCourses.length ? "Pick courses in 'This semester' first" : undefined}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            {generating
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : <Wand2 className="h-3.5 w-3.5" />}
-            {generating ? "Generating…" : "Generate"}
-          </button>
+          {!published && (
+            <button
+              onClick={() => setClearOpen(true)}
+              disabled={!dataset || (!placements.length && !activeCourses && !activeRooms)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Clear
+            </button>
+          )}
+          {!published && (
+            <button
+              onClick={handleGenerate}
+              disabled={generating || !semesterCourses.length}
+              title={!semesterCourses.length ? "Pick courses in 'This semester' first" : undefined}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {generating
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Wand2 className="h-3.5 w-3.5" />}
+              {generating ? "Generating…" : "Generate"}
+            </button>
+          )}
+          {/* Publish locks the timetable as the official version; unpublish to edit again. */}
+          {published ? (
+            <button
+              onClick={() => setPublished(false)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              Unpublish
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (validation && !validation.valid) {
+                  if (!window.confirm("This timetable still has conflicts. Publish anyway?")) return;
+                }
+                setPublished(true);
+              }}
+              disabled={!placements.length}
+              title={!placements.length ? "Nothing to publish yet" : undefined}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Publish
+            </button>
+          )}
         </div>
       </div>
 
@@ -1757,7 +1917,7 @@ export default function Timetable() {
                                 index={u.index}
                                 cohort={multiSection.has(u.courseCode) ? cohortLetter(u.section) : undefined}
                                 meetingNo={(g.sessionCount[u.kind] ?? 1) > 1 ? u.index + 1 : undefined}
-                                onClick={() => setInspector(u)}
+                                onClick={published ? () => {} : () => setInspector(u)}
                               />
                             ))}
                           </div>
@@ -1823,7 +1983,7 @@ export default function Timetable() {
                           facultyName={facultyOf.get(s.placement.faculty)}
                           roomName={roomOf.get(s.placement.room)}
                           flagged={flagged.has(mkKey(s.placement))}
-                          onClick={previewing ? undefined : () => setInspector({
+                          onClick={previewing || published ? undefined : () => setInspector({
                             courseCode: s.placement.course,
                             section: s.placement.section,
                             kind: s.placement.kind,
@@ -1892,7 +2052,7 @@ export default function Timetable() {
                             cohort={multiSection.has(s.placement.course) ? cohortLetter(s.placement.section) : undefined}
                             facultyName={facultyOf.get(s.placement.faculty)}
                             flagged={flagged.has(mkKey(s.placement))}
-                            onClick={() => setInspector({
+                            onClick={previewing || published ? undefined : () => setInspector({
                               courseCode: s.placement.course,
                               section: s.placement.section,
                               kind: s.placement.kind,

@@ -10,7 +10,7 @@ import Rooms from "@/pages/Rooms";
 import StudentsPage from "@/pages/Students";
 import { Toaster } from "@/components/ui/toaster";
 import { useTimetable } from "@/store/timetable";
-import { loadDataset, loadAvailability, ensureDefaultSession, loadSessionPlacements, supabase } from "@/lib/supabase";
+import { loadDataset, listSessions, loadSessionPlacements, supabase } from "@/lib/supabase";
 import AppLoader from "@/components/AppLoader";
 
 const queryClient = new QueryClient({
@@ -18,8 +18,7 @@ const queryClient = new QueryClient({
 });
 
 function AppInit({ onReady }: { onReady: () => void }) {
-  const { setDataset, setPlacements, setSemesterId, semesterId } = useTimetable();
-  const store = useTimetable;
+  const { setDataset, setPlacements, setSessions, setCurrentSession, semesterId } = useTimetable();
 
   useEffect(() => {
     let settled = false;
@@ -29,16 +28,16 @@ function AppInit({ onReady }: { onReady: () => void }) {
 
     Promise.all([
       loadDataset().then(ds => { if (ds) setDataset(ds); }),
-      loadAvailability().then(({ courses, rooms }) => {
-        // Write directly: the setters would persist right back to Supabase.
-        store.setState({ activeCourses: courses, activeRooms: rooms });
-      }),
-      ensureDefaultSession().then(async id => {
-        setSemesterId(id);
-        if (id !== "offline") {
-          const saved = await loadSessionPlacements(id);
-          if (saved.length) setPlacements(saved);
-        }
+      // Load the named sessions, open the most recent one (or one remembered
+      // from last visit), and pull its placements + picks.
+      listSessions().then(async sessions => {
+        if (!sessions.length) return;
+        setSessions(sessions);
+        const remembered = localStorage.getItem("currentSessionId");
+        const current = sessions.find(s => s.id === remembered) ?? sessions[0];
+        setCurrentSession(current);
+        const saved = await loadSessionPlacements(current.id);
+        setPlacements(saved);
       }),
       minDelay,
     ])
@@ -48,7 +47,14 @@ function AppInit({ onReady }: { onReady: () => void }) {
     // Don't block indefinitely if Supabase is slow. Show the app after 4 s.
     const fallback = setTimeout(settle, 4000);
     return () => clearTimeout(fallback);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps  -- run once on mount
+
+  // Remember which session was open so a refresh returns to it.
+  useEffect(() => {
+    if (semesterId && semesterId !== "offline") {
+      localStorage.setItem("currentSessionId", semesterId);
+    }
+  }, [semesterId]);
 
   // I subscribed to live placement changes so two people editing the
   // same timetable see each other's moves without refreshing.
@@ -72,7 +78,7 @@ function AppInit({ onReady }: { onReady: () => void }) {
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [semesterId]);
+  }, [semesterId]); // eslint-disable-line react-hooks/exhaustive-deps  -- resubscribe only when the session changes
 
   return null;
 }

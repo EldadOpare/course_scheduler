@@ -206,6 +206,18 @@ export interface SimulateResult {
   error: string | null;
 }
 
+// A named timetable the registry switches between (e.g. "Sem 1 2026").
+// Its placements live in the placements table keyed by this id; its
+// course/room picks and published state live on the row itself.
+export interface TimetableSession {
+  id: string;
+  label: string;
+  active_courses: Record<string, number> | null;
+  active_rooms: string[] | null;
+  published_at: string | null;  // set = published/locked; null = draft
+  created_at: string;
+}
+
 export interface TimetableSnapshot {
   id: string;
   label: string;
