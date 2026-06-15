@@ -9,10 +9,10 @@ import { useTimetable } from "@/store/timetable";
 import { simulate } from "@/lib/api";
 import PageHeader from "@/components/PageHeader";
 import type { SchedulingRules, SimulateResult, Placement } from "@/types";
-import { DEFAULT_RULES, ftTime, pmTime, cohortLetter } from "@/types";
+import { DEFAULT_RULES, ftTime, pmTime, cohortLetter, UNASSIGNED_FACULTY } from "@/types";
 import { cn } from "@/lib/utils";
 
-const UNASSIGNED = "__unassigned__";
+const UNASSIGNED = UNASSIGNED_FACULTY;
 
 const DAY_LABEL: Record<string, string> = {
   Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday",

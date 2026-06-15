@@ -21,7 +21,7 @@ import StatusBadge from "@/components/StatusBadge";
 import type {
   Placement, PlaceOption, Dataset, GenerateOption, TimetableSnapshot,
 } from "@/types";
-import { mkKey, pmTime, ftTime, cohortLetter } from "@/types";
+import { mkKey, pmTime, ftTime, cohortLetter, UNASSIGNED_FACULTY } from "@/types";
 import { cn } from "@/lib/utils";
 
 const DAY_LABEL: Record<string, string> = {
@@ -510,7 +510,7 @@ function SnapshotsModal({
           <div>
             <h2 className="text-sm text-foreground">Saved timetables</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Save versions that worked. Restore one later or use it as a starting point for a new draft.
+              Save versions that worked. Load one back onto the board anytime, or load it, tweak it, and save again as a copy for another semester.
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -579,7 +579,7 @@ function SnapshotsModal({
                     onClick={() => { onRestore(s.placements); onClose(); }}
                     className="px-2.5 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
                   >
-                    Restore
+                    Load onto board
                   </button>
                   <button
                     onClick={() => handleDelete(s.id)}
@@ -713,7 +713,7 @@ function AvailabilityModal({
             <h2 className="text-sm text-foreground">This semester</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Pick the courses running this semester and the classrooms available for scheduling.
-              The unscheduled tray and Generate only use what's ticked here. Set cohorts per course in the tray afterwards.
+              The unscheduled tray and Generate only use what's ticked here. Set cohorts per course in the tray afterwards. Unticking a course also removes any classes already placed for it.
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -765,7 +765,7 @@ function AvailabilityModal({
   );
 }
 
-const UNASSIGNED = "__unassigned__";
+const UNASSIGNED = UNASSIGNED_FACULTY;
 
 // After a draft is generated we know the timetable is feasible; this is
 // where the registrar assigns the real lecturer (and optional faculty
@@ -901,6 +901,76 @@ function LecturersModal({
   );
 }
 
+// Clearing wipes the board and the semester's course/room picks. We offer
+// to save a copy first so nothing is lost by accident.
+function ClearBoardModal({
+  count, onSaveAndClear, onClearOnly, onClose,
+}: {
+  count: number;
+  onSaveAndClear: (label: string) => Promise<void>;
+  onClearOnly: () => void;
+  onClose: () => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-foreground/20 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative w-full max-w-[440px] rounded-xl border border-border bg-background shadow-xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h2 className="text-sm text-foreground">Clear the timetable</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            This removes {count} placed class{count !== 1 ? "es" : ""} and resets the courses and rooms picked for this semester.
+            Save a copy first if you want to keep it.
+          </p>
+          <div>
+            <label className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">Name this version (optional)</label>
+            <input
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              placeholder="e.g. Semester 1 2026 draft"
+              className="w-full mt-1 px-3 py-2 text-xs rounded-lg border border-border bg-background text-foreground"
+            />
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-border flex items-center justify-between gap-2 flex-wrap">
+          <button
+            onClick={onClearOnly}
+            className="text-xs text-destructive hover:underline"
+          >
+            Clear without saving
+          </button>
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                if (!label.trim() || saving) return;
+                setSaving(true);
+                try { await onSaveAndClear(label.trim()); } finally { setSaving(false); }
+              }}
+              disabled={!label.trim() || saving || !count}
+              className="px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save and clear"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Timetable() {
   const {
     placements, dataset, validation, upsertPlacement, removePlacement, applyDraft, setValidation,
@@ -920,6 +990,7 @@ export default function Timetable() {
   const [genError, setGenError] = useState<string | null>(null);
   const [snapsOpen, setSnapsOpen] = useState(false);
   const [availOpen, setAvailOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [lecturersOpen, setLecturersOpen] = useState(false);
   const [view, setView] = useState<"week" | "day">("week");
   const [dayFocus, setDayFocus] = useState("Mon");
@@ -1180,10 +1251,28 @@ export default function Timetable() {
     setGenOptions(null);
     // Feasibility is proven; nudge straight into assigning lecturers when
     // the draft used the placeholder for any class.
-    if (opt.placements.some(p => p.faculty === "__unassigned__")) {
+    if (opt.placements.some(p => p.faculty === UNASSIGNED)) {
       setLecturersOpen(true);
     }
   }, [applyDraft]);
+
+  // Wipe the board and the semester's picks. validation is cleared too so
+  // stale conflicts don't hang around.
+  const clearBoard = useCallback(() => {
+    applyDraft([]);
+    setActiveCourses(null);
+    setActiveRooms(null);
+    setValidation(null);
+    setClearOpen(false);
+  }, [applyDraft, setActiveCourses, setActiveRooms, setValidation]);
+
+  const saveThenClear = useCallback(async (label: string) => {
+    await saveSnapshot(label, placements, {
+      score: validation?.score ?? null,
+      valid: validation?.valid ?? null,
+    });
+    clearBoard();
+  }, [placements, validation, clearBoard]);
 
   const handlePlaceOption = useCallback(async (opt: PlaceOption) => {
     if (!inspector) return;
@@ -1347,6 +1436,14 @@ export default function Timetable() {
           >
             <Bookmark className="h-3.5 w-3.5" />
             Saved
+          </button>
+          <button
+            onClick={() => setClearOpen(true)}
+            disabled={!dataset || (!placements.length && !activeCourses && !activeRooms)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Clear
           </button>
           <button
             onClick={handleGenerate}
@@ -1831,6 +1928,12 @@ export default function Timetable() {
             activeCourses={activeCourses}
             activeRooms={activeRooms}
             onSave={(courses, rooms) => {
+              // Dropping a course from the semester also clears its placed
+              // classes, so the board never keeps orphans the registrar
+              // can no longer see in the tray.
+              for (const p of placements) {
+                if (!(p.course in courses)) removePlacement(mkKey(p));
+              }
               setActiveCourses(courses);
               setActiveRooms(rooms);
               setAvailOpen(false);
@@ -1856,6 +1959,15 @@ export default function Timetable() {
             valid={validation?.valid ?? null}
             onRestore={applyDraft}
             onClose={() => setSnapsOpen(false)}
+          />
+        )}
+
+        {clearOpen && (
+          <ClearBoardModal
+            count={placements.length}
+            onSaveAndClear={saveThenClear}
+            onClearOnly={clearBoard}
+            onClose={() => setClearOpen(false)}
           />
         )}
 

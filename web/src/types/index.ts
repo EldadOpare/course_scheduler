@@ -1,3 +1,9 @@
+// The placeholder "teacher" the engine uses while a timetable is being
+// built before lecturers are assigned. Must match UNASSIGNED_FACULTY in
+// timetabler/models.py. Kept in one place so a typo can't silently break
+// the placeholder logic.
+export const UNASSIGNED_FACULTY = "__unassigned__";
+
 export interface Window_ {
   day: string;
   start: string;
