@@ -8,7 +8,7 @@ import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import {
   CalendarDays, ChevronDown, ChevronRight, X, Loader2, Search, Check,
   Wand2, Download, CheckCircle2, AlertTriangle, Bookmark, FilterX, Trash2, CheckCheck,
-  ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon, UserCheck,
+  ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon, UserCheck, Wrench,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import {
@@ -166,17 +166,24 @@ interface InspectorTarget {
 }
 
 function Inspector({
-  target, dataset, placements, onClose, onPlace,
+  target, dataset, placements, days, onClose, onPlace, onManualPlace,
 }: {
   target: InspectorTarget | null;
   dataset: Dataset | null;
   placements: Placement[];
+  days: string[];
   onClose: () => void;
   onPlace: (opt: PlaceOption) => void;
+  onManualPlace: (m: { day: string; start: string; room: string; faculty: string }) => void;
 }) {
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState<PlaceOption[]>([]);
   const [lastKey, setLastKey] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [mDay, setMDay] = useState("");
+  const [mStart, setMStart] = useState("");
+  const [mRoom, setMRoom] = useState("");
+  const [mFaculty, setMFaculty] = useState(UNASSIGNED);
 
   const tKey = target
     ? `${target.courseCode}|${target.section}|${target.kind}|${target.index}|${target.day}|${target.startStr}`
@@ -261,6 +268,100 @@ function Inspector({
         {!loading && options.length === 0 && lastKey === tKey && (
           <p className="text-xs text-muted-foreground italic text-center pt-2">No valid options found.</p>
         )}
+
+        {/* manual entry — type the day/time/room directly, no drag needed */}
+        <div className="pt-2 mt-1 border-t border-border">
+          <button
+            onClick={() => {
+              setManualOpen(v => {
+                const next = !v;
+                if (next) {
+                  setMDay(target.day || days[0] || "Mon");
+                  setMStart(target.startStr || "08:00");
+                  setMRoom(prev => prev || dataset?.rooms[0]?.id || "");
+                }
+                return next;
+              });
+            }}
+            className="flex items-center justify-between w-full py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span>Set time manually</span>
+            {manualOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+
+          {manualOpen && (
+            <div className="space-y-2 pt-1">
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <span className="text-[10px] text-muted-foreground">Day</span>
+                  <select
+                    value={mDay}
+                    onChange={e => setMDay(e.target.value)}
+                    className="w-full mt-0.5 px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
+                  >
+                    {days.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[10px] text-muted-foreground">Start time</span>
+                  <input
+                    type="time"
+                    value={mStart}
+                    onChange={e => setMStart(e.target.value)}
+                    className="w-full mt-0.5 px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
+                  />
+                </label>
+              </div>
+              <label className="block">
+                <span className="text-[10px] text-muted-foreground">Room</span>
+                <select
+                  value={mRoom}
+                  onChange={e => setMRoom(e.target.value)}
+                  className="w-full mt-0.5 px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
+                >
+                  {(dataset?.rooms ?? []).map(r => (
+                    <option key={r.id} value={r.id}>{r.name} · {r.capacity} seats</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[10px] text-muted-foreground">Lecturer</span>
+                <select
+                  value={mFaculty}
+                  onChange={e => setMFaculty(e.target.value)}
+                  className="w-full mt-0.5 px-2 py-1.5 text-xs rounded-lg border border-border bg-background text-foreground"
+                >
+                  <option value={UNASSIGNED}>Unassigned</option>
+                  {(dataset?.faculty ?? [])
+                    .filter(f => f.id !== UNASSIGNED)
+                    .sort((a, b) => {
+                      const aa = a.approved_courses.includes(target.courseCode) ? 0 : 1;
+                      const bb = b.approved_courses.includes(target.courseCode) ? 0 : 1;
+                      return aa - bb || a.name.localeCompare(b.name);
+                    })
+                    .map(f => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}{f.approved_courses.includes(target.courseCode) ? " ✓" : ""}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <button
+                onClick={() => {
+                  if (!mDay || !mStart || !mRoom) return;
+                  onManualPlace({ day: mDay, start: mStart, room: mRoom, faculty: mFaculty });
+                }}
+                disabled={!mDay || !mStart || !mRoom}
+                className="w-full py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                Place at this time
+              </button>
+              <p className="text-[10px] text-muted-foreground leading-snug">
+                Manual placement skips the slot checks — run Validate afterwards to catch any clashes.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -855,6 +956,7 @@ export default function Timetable() {
     () => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches,
   );
   const [validating, setValidating] = useState(false);
+  const [autoFixing, setAutoFixing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [genOptions, setGenOptions] = useState<GenerateOption[] | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
@@ -1057,6 +1159,35 @@ export default function Timetable() {
     }
   }, [placements, engineDataset, setValidation]);
 
+  // Auto-fix: pin every class that isn't part of a conflict, then let the
+  // engine re-place only the flagged ones into legal slots around them.
+  const handleAutoFix = useCallback(async () => {
+    if (!engineDataset || autoFixing || !validation || validation.valid) return;
+    setAutoFixing(true);
+    setGenError(null);
+    try {
+      const flaggedSet = new Set(validation.flagged);
+      const locked = flaggedSet.size
+        ? placements.filter(p => !flaggedSet.has(mkKey(p)))
+        : [];  // can't pinpoint — let the engine rework the whole draft
+      const res = await apiGenerate(engineDataset, locked);
+      if (res.error) { setGenError(res.error); return; }
+      const best = res.options?.[0];
+      if (best) {
+        applyDraft(best.placements);
+        const v = await apiValidate(best.placements, engineDataset);
+        setValidation(v);
+        if (!v.valid) {
+          setGenError("Auto-fix reduced the clashes it could; some conflicts need a manual move or more rooms.");
+        }
+      }
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : "Auto-fix failed");
+    } finally {
+      setAutoFixing(false);
+    }
+  }, [engineDataset, autoFixing, validation, placements, applyDraft, setValidation]);
+
   const handleGenerate = useCallback(async () => {
     if (!engineDataset || generating) return;
     setGenerating(true);
@@ -1089,6 +1220,18 @@ export default function Timetable() {
       course: courseCode, section, kind, index,
       day: opt.day, start: opt.start,
       room: opt.room, faculty: opt.faculty,
+    });
+    setInspector(null);
+  }, [inspector, upsertPlacement]);
+
+  // Direct placement from the manual form — no slot checks, the registrar
+  // decides; Validate flags any clash afterwards.
+  const handleManualPlace = useCallback((m: { day: string; start: string; room: string; faculty: string }) => {
+    if (!inspector) return;
+    const { courseCode, section, kind, index } = inspector;
+    upsertPlacement({
+      course: courseCode, section, kind, index,
+      day: m.day, start: m.start, room: m.room, faculty: m.faculty,
     });
     setInspector(null);
   }, [inspector, upsertPlacement]);
@@ -1176,6 +1319,16 @@ export default function Timetable() {
             {validating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Validate
           </button>
+          {validation && !validation.valid && (
+            <button
+              onClick={handleAutoFix}
+              disabled={autoFixing}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+            >
+              {autoFixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
+              {autoFixing ? "Fixing…" : "Auto-fix conflicts"}
+            </button>
+          )}
           <button
             onClick={() => dataset && exportCsv(filterActive ? visiblePlacements : placements, dataset)}
             disabled={!dataset || !placements.length}
@@ -1581,8 +1734,10 @@ export default function Timetable() {
             target={inspector}
             dataset={engineDataset}
             placements={placements}
+            days={days}
             onClose={() => setInspector(null)}
             onPlace={handlePlaceOption}
+            onManualPlace={handleManualPlace}
           />
         </div>
 
