@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, CalendarDays, CheckCircle2, AlertTriangle,
   ChevronDown, ChevronRight, SlidersHorizontal, CalendarRange, Loader2,
-  ArrowRight, BookOpen, Users, DoorOpen,
+  BookOpen, Users, DoorOpen,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import { simulate } from "@/lib/api";
@@ -47,23 +47,6 @@ export default function Dashboard() {
   }, [dataset, activeCourses, placements]);
 
   const conflicts = validation?.violations.length ?? 0;
-  const checked = validation != null;
-
-  // The single most important line for a registrar: can I publish this?
-  const status: { tone: "good" | "warn" | "bad" | "idle"; title: string; detail: string } =
-    !dataset
-      ? { tone: "idle", title: "Loading…", detail: "Fetching your data." }
-      : stats.coursesThisSemester === 0
-        ? { tone: "idle", title: "No courses selected yet",
-            detail: "Open the timetable and choose which courses run this semester to begin." }
-        : !checked
-          ? { tone: "warn", title: "Not validated yet",
-              detail: "Open the timetable and click Validate to check for conflicts." }
-          : conflicts > 0
-            ? { tone: "bad", title: `${conflicts} conflict${conflicts !== 1 ? "s" : ""} to resolve`,
-                detail: "Some classes clash. Fix them before publishing the timetable." }
-            : { tone: "good", title: "Ready to publish",
-                detail: "No conflicts. The timetable satisfies every rule." };
 
   // Plain-language to-do list — only what a registrar can act on.
   const todos = useMemo(() => {
@@ -94,9 +77,6 @@ export default function Dashboard() {
           title="Overview"
           subtitle="A quick look at this semester's timetable"
         />
-
-        {/* status hero */}
-        <StatusHero status={status} onOpen={() => navigate("/timetable")} />
 
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -148,36 +128,6 @@ export default function Dashboard() {
   );
 }
 
-function StatusHero({
-  status, onOpen,
-}: {
-  status: { tone: "good" | "warn" | "bad" | "idle"; title: string; detail: string };
-  onOpen: () => void;
-}) {
-  const tone = {
-    good: { ring: "border-success/30 bg-success/5", icon: <CheckCircle2 className="h-6 w-6 text-success" /> },
-    bad:  { ring: "border-destructive/30 bg-destructive/5", icon: <AlertTriangle className="h-6 w-6 text-destructive" /> },
-    warn: { ring: "border-amber-500/30 bg-amber-500/5", icon: <AlertTriangle className="h-6 w-6 text-amber-500" /> },
-    idle: { ring: "border-border bg-muted/30", icon: <CalendarDays className="h-6 w-6 text-muted-foreground" /> },
-  }[status.tone];
-
-  return (
-    <div className={cn("animate-fade-up rounded-xl border p-5 flex items-center gap-4", tone.ring)}>
-      <div className="shrink-0">{tone.icon}</div>
-      <div className="min-w-0 flex-1">
-        <div className="text-base text-foreground">{status.title}</div>
-        <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{status.detail}</div>
-      </div>
-      <button
-        onClick={onOpen}
-        className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-      >
-        Open timetable <ArrowRight className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
-
 function WeekGlance({ placements, activeCourses }: { placements: Placement[]; activeCourses: Record<string, number> | null }) {
   const { dataset } = useTimetable();
   const roomName = useMemo(
@@ -219,11 +169,11 @@ function WeekGlance({ placements, activeCourses }: { placements: Placement[]; ac
           <p className="text-[11px] text-muted-foreground/70 mt-0.5">Generate or place classes on the timetable to see them here.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="flex gap-3 overflow-x-auto pb-1">
           {days.map(d => {
             const list = byDay.get(d) ?? [];
             return (
-              <div key={d} className="min-w-0">
+              <div key={d} className="min-w-[110px] flex-1">
                 <div className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 mb-2">
                   {DAY_LABEL[d] ?? d}
                   <span className="ml-1 text-muted-foreground/40">{list.length || ""}</span>

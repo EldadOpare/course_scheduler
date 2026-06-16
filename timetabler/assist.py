@@ -45,6 +45,6 @@ def explain(report_text: str) -> str | None:
             "Authorization": f"Bearer {os.environ['XAI_API_KEY']}",
         },
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 — URL is the hardcoded API_URL constant, never user-supplied
         data = json.loads(resp.read())
     return data["choices"][0]["message"]["content"]

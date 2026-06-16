@@ -1,8 +1,7 @@
-import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, CalendarDays, BookOpen, Users, School, GraduationCap,
-  ChevronDown, X, PanelLeftClose, PanelLeftOpen,
+  X, PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ashLogo from "@/assets/ash_logo.png";
@@ -58,9 +57,6 @@ const NavItem = ({
 
 const Sidebar = ({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps) => {
   const isMobile = useIsMobile();
-  const [schedOpen, setSchedOpen] = useState(true);
-  const [dataOpen, setDataOpen] = useState(true);
-  // I called useLocation so the active nav item updates when the route changes.
   useLocation();
 
   return (
@@ -100,38 +96,26 @@ const Sidebar = ({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps)
             ))}
           </div>
         ) : (
-          <div className="px-3 space-y-3">
+          <div className="px-3 space-y-4">
             <div>
-              <button
-                onClick={() => setSchedOpen(o => !o)}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <span>Scheduling</span>
-                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", schedOpen && "rotate-180")} />
-              </button>
-              {schedOpen && (
-                <div className="mt-1 space-y-0.5">
-                  {SCHEDULING.map(({ to, icon, label }) => (
-                    <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} onClick={() => isMobile && onClose()} />
-                  ))}
-                </div>
-              )}
+              <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/50">
+                Schedule
+              </div>
+              <div className="space-y-0.5">
+                {SCHEDULING.map(({ to, icon, label }) => (
+                  <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} onClick={() => isMobile && onClose()} />
+                ))}
+              </div>
             </div>
             <div>
-              <button
-                onClick={() => setDataOpen(o => !o)}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <span>Data</span>
-                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", dataOpen && "rotate-180")} />
-              </button>
-              {dataOpen && (
-                <div className="mt-1 space-y-0.5">
-                  {DATA.map(({ to, icon, label }) => (
-                    <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} onClick={() => isMobile && onClose()} />
-                  ))}
-                </div>
-              )}
+              <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/50">
+                Data
+              </div>
+              <div className="space-y-0.5">
+                {DATA.map(({ to, icon, label }) => (
+                  <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} onClick={() => isMobile && onClose()} />
+                ))}
+              </div>
             </div>
           </div>
         )}

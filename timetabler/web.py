@@ -11,7 +11,19 @@ from . import assist, engine, generate as gen, loader, suggest as sug, timegrid
 from .models import Placement, fmt_time, parse_time
 
 
+_MAX_ITEMS = 2000  # guard against pathologically large payloads
+
 def _dataset(body: dict):
+    for field in ("courses", "faculty", "rooms"):
+        if field not in body:
+            raise ValueError(f"'{field}' is required")
+        if not isinstance(body[field], list):
+            raise ValueError(f"'{field}' must be an array")
+        if len(body[field]) > _MAX_ITEMS:
+            raise ValueError(f"'{field}' exceeds maximum of {_MAX_ITEMS} items")
+    semester = body.get("semester", 1)
+    if semester not in (1, 2):
+        raise ValueError("semester must be 1 or 2")
     return loader.load_dataset_from_dicts(
         body["courses"], body["faculty"], body["rooms"],
         majors_list=body.get("majors"),
@@ -19,7 +31,7 @@ def _dataset(body: dict):
         rules=body.get("rules"),
         timegrid=body.get("timegrid"),
         durations=body.get("durations"),
-        semester=int(body.get("semester", 1)),
+        semester=int(semester),
     )
 
 
@@ -35,16 +47,31 @@ def _placement_dict(p: Placement) -> dict:
     }
 
 
+_PLACEMENT_REQUIRED = ("course", "section", "kind", "day", "start", "room", "faculty")
+
 def _parse_placements(body: dict, ds=None, key: str = "placements") -> list[Placement]:
-    return [
-        Placement(
-            course=d["course"], section=int(d["section"]), kind=d["kind"],
-            index=int(d.get("index", 0)), day=d["day"],
-            start=parse_time(d["start"]), room=d["room"], faculty=d["faculty"],
-            duration=ds.duration_of(d["kind"]) if ds else 0,
-        )
-        for d in body.get(key, [])
-    ]
+    raw = body.get(key, [])
+    if not isinstance(raw, list):
+        raise ValueError(f"{key} must be an array")
+    placements = []
+    for i, d in enumerate(raw):
+        if not isinstance(d, dict):
+            raise ValueError(f"{key}[{i}] must be an object")
+        missing = [f for f in _PLACEMENT_REQUIRED if f not in d]
+        if missing:
+            raise ValueError(f"{key}[{i}] missing fields: {', '.join(missing)}")
+        try:
+            p = Placement(
+                course=str(d["course"]), section=int(d["section"]), kind=str(d["kind"]),
+                index=int(d.get("index", 0)), day=str(d["day"]),
+                start=parse_time(str(d["start"])), room=str(d["room"]),
+                faculty=str(d["faculty"]),
+                duration=ds.duration_of(str(d["kind"])) if ds else 0,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{key}[{i}] invalid: {exc}") from exc
+        placements.append(p)
+    return placements
 
 
 def validate_payload(body: dict) -> dict:
@@ -89,10 +116,12 @@ def _option_dict(ds, cand: Placement, penalty: int, percent: int = 0) -> dict:
 def suggest_payload(body: dict) -> dict:
     ds = _dataset(body)
     placements = _parse_placements(body, ds)
+    if "course" not in body:
+        raise ValueError("course is required")
     options = sug.suggest(
-        ds, placements, body["course"], int(body.get("section", 1)),
-        body.get("kind", "lecture"), int(body.get("index", 0)),
-        top=int(body.get("top", 5)),
+        ds, placements, str(body["course"]), int(body.get("section", 1)),
+        str(body.get("kind", "lecture")), int(body.get("index", 0)),
+        top=min(int(body.get("top", 5)), 20),
     )
     return {"options": [
         _option_dict(ds, o.placement, o.penalty, o.percent) for o in options
@@ -103,11 +132,22 @@ def place_payload(body: dict) -> dict:
     """Best room/teacher options for one meeting at one specific day+start."""
     ds = _dataset(body)
     placements = _parse_placements(body, ds)
+    if "course" not in body:
+        raise ValueError("course is required")
+    if "day" not in body or "start" not in body:
+        raise ValueError("day and start are required")
     course = ds.courses[body["course"]]
     section = int(body.get("section", 1))
-    kind = body.get("kind", "lecture")
+    kind = str(body.get("kind", "lecture"))
     index = int(body.get("index", 0))
-    day, start = body["day"], parse_time(body["start"])
+    day = str(body["day"])
+    all_days = list(ds.timegrid.weekdays) + list(ds.timegrid.weekend)
+    if day not in all_days:
+        raise ValueError(f"day must be one of {all_days}")
+    try:
+        start = parse_time(str(body["start"]))
+    except (ValueError, AttributeError):
+        raise ValueError(f"start must be HH:MM, got {body['start']!r}")
 
     if not timegrid.is_approved(kind, course.program, day, start,
                                 ds.timegrid, ds.duration_of(kind)):

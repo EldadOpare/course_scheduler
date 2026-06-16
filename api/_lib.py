@@ -37,10 +37,15 @@ def handle_post(req, fn):
         return send_json(req, {"error": "JSON body must be an object"}, 400)
     try:
         send_json(req, fn(body))
-    except KeyError as e:
-        send_json(req, {"error": f"missing or unknown field/id: {e}"}, 400)
+    except KeyError:
+        # Don't echo the key name — it leaks schema details.
+        traceback.print_exc()
+        send_json(req, {"error": "missing required field"}, 400)
     except (TypeError, ValueError) as e:
-        send_json(req, {"error": f"malformed request: {e}"}, 400)
+        # ValueError messages from our own validators are safe to surface;
+        # TypeError is likely a type mismatch from caller code — scrub it.
+        msg = str(e) if isinstance(e, ValueError) else "malformed request"
+        send_json(req, {"error": msg}, 400)
     except Exception:
         # Never leak stack traces or internals to clients.
         traceback.print_exc()

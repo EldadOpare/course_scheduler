@@ -426,9 +426,10 @@ function exportCsv(placements: Placement[], dataset: Dataset) {
   const roomOf    = new Map(dataset.rooms.map(r => [r.id, r]));
   const facultyOf = new Map(dataset.faculty.map(f => [f.id, f]));
   const q = (v: string | number) => {
-    let s = String(v);
-    // Guard against spreadsheet formula injection when opened in Excel.
-    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    // Strip CR/LF to prevent row-injection, then prefix formula-trigger
+    // chars so Excel/Sheets never interpret them as formulae.
+    let s = String(v).replace(/[\r\n]/g, " ");
+    if (/^[=+\-@\t|]/.test(s)) s = `'${s}`;
     return `"${s.replace(/"/g, '""')}"`;
   };
 
@@ -523,8 +524,13 @@ function printTimetable(placements: Placement[], dataset: Dataset, title: string
     <script>window.onload = () => window.print();</script>
   </body></html>`;
 
-  const w = window.open("", "_blank");
-  if (w) { w.document.write(html); w.document.close(); }
+  // Blob URL avoids document.write and bypasses popup-blocker restrictions.
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  // Revoke after the new window has had a moment to load from the blob URL.
+  if (w) w.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+  else URL.revokeObjectURL(url);
 }
 
 function SnapshotsModal({
@@ -569,7 +575,7 @@ function SnapshotsModal({
       <div className="relative w-full max-w-[560px] max-h-[90vh] flex flex-col rounded-xl border border-border bg-background shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <h2 className="text-sm text-foreground">Saved timetables</h2>
+            <h2 className="text-sm text-foreground">Saved versions</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Save versions that worked. Load one back onto the board anytime, or load it, tweak it, and save again as a copy for another semester.
             </p>
@@ -1224,19 +1230,38 @@ export default function Timetable() {
   // data is loaded — an empty list after load means the value is genuinely stale.
   useEffect(() => {
     if (dataset && filterFaculty && !semesterFaculty.some(f => f.id === filterFaculty)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFilterFaculty("");
     }
   }, [dataset, semesterFaculty, filterFaculty]);
   useEffect(() => {
     if (dataset && filterRoom && !semesterRooms.some(r => r.id === filterRoom)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFilterRoom("");
     }
   }, [dataset, semesterRooms, filterRoom]);
   useEffect(() => {
     if (dataset && filterCourse && !filterableCourses.some(c => c.code === filterCourse)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFilterCourse("");
     }
   }, [dataset, filterableCourses, filterCourse]);
+
+  // Auto-validate whenever placements or dataset change (debounced 400 ms).
+  // Skips when there's nothing to validate or while auto-fix is running.
+  useEffect(() => {
+    if (!engineDataset || !placements.length) return;
+    const id = setTimeout(async () => {
+      setValidating(true);
+      try {
+        const res = await apiValidate(placements, engineDataset);
+        setValidation(res);
+      } finally {
+        setValidating(false);
+      }
+    }, 400);
+    return () => clearTimeout(id);
+  }, [placements, engineDataset, setValidation]);
 
   // I derived the grid's columns and rows from the timegrid settings (and
   // I keyed days by the short names the engine uses, because keying them
@@ -1385,17 +1410,6 @@ export default function Timetable() {
       setInspector({ courseCode, section, kind, index, day, startStr: toHHMM(timeMin) });
     }
   }, [upsertPlacement, previewing, published]);
-
-  const handleValidate = useCallback(async () => {
-    if (!engineDataset) return;
-    setValidating(true);
-    try {
-      const res = await apiValidate(placements, engineDataset);
-      setValidation(res);
-    } finally {
-      setValidating(false);
-    }
-  }, [placements, engineDataset, setValidation]);
 
   // Auto-fix: pin every class that isn't part of a conflict, then let the
   // engine re-place only the flagged ones into legal slots around them.
@@ -1575,17 +1589,17 @@ export default function Timetable() {
             >
               {!sessions.length && <option value="">Timetable</option>}
               {sessions.map(s => (
-                <option key={s.id} value={s.id}>{s.label}{s.published_at ? " (published)" : ""}</option>
+                <option key={s.id} value={s.id}>{s.label}{s.published_at ? " (Final)" : ""}</option>
               ))}
             </select>
             <ChevronDown className="absolute right-1 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           </div>
           <button
             onClick={async () => {
-              const label = window.prompt("Name the new timetable", "New timetable");
+              const label = window.prompt("Name the new semester plan", "New semester plan");
               if (label && label.trim()) await newSession(label.trim());
             }}
-            title="New timetable"
+            title="New semester plan"
             className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"
           >
             <PlusIcon className="h-3.5 w-3.5" />
@@ -1593,7 +1607,7 @@ export default function Timetable() {
           <button
             onClick={() => {
               if (!currentSession) return;
-              const label = window.prompt("Rename timetable", currentSession.label);
+              const label = window.prompt("Rename semester plan", currentSession.label);
               if (label && label.trim()) renameCurrentSession(label.trim());
             }}
             disabled={!currentSession}
@@ -1605,7 +1619,7 @@ export default function Timetable() {
           <button
             onClick={() => {
               if (!currentSession) return;
-              if (window.confirm(`Delete "${currentSession.label}" and its placements? This cannot be undone.`)) {
+              if (window.confirm(`Delete "${currentSession.label}" and all its placements? This cannot be undone.`)) {
                 deleteCurrentSession();
               }
             }}
@@ -1617,7 +1631,7 @@ export default function Timetable() {
           </button>
           {published && (
             <span className="ml-1 flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/10 text-success text-[10px] tracking-[0.04em] uppercase">
-              <CheckCircle2 className="h-3 w-3" /> Published
+              <CheckCircle2 className="h-3 w-3" /> Final
             </span>
           )}
         </div>
@@ -1640,14 +1654,11 @@ export default function Timetable() {
               </span>
             )}
           </button>
-          <button
-            onClick={handleValidate}
-            disabled={validating || !dataset}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
-          >
-            {validating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Validate
-          </button>
+          {validating && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            </span>
+          )}
           {validation && !validation.valid && (
             <>
               <button
@@ -1713,7 +1724,7 @@ export default function Timetable() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
           >
             <Bookmark className="h-3.5 w-3.5" />
-            Saved
+            Saved versions
           </button>
           {!published && (
             <button
@@ -1735,7 +1746,7 @@ export default function Timetable() {
               {generating
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 : <Wand2 className="h-3.5 w-3.5" />}
-              {generating ? "Generating…" : "Generate"}
+              {generating ? "Scheduling…" : "Auto-schedule"}
             </button>
           )}
           {/* Publish locks the timetable as the official version; unpublish to edit again. */}
@@ -1745,22 +1756,22 @@ export default function Timetable() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
             >
               <Lock className="h-3.5 w-3.5" />
-              Unpublish
+              Edit again
             </button>
           ) : (
             <button
               onClick={() => {
                 if (validation && !validation.valid) {
-                  if (!window.confirm("This timetable still has conflicts. Publish anyway?")) return;
+                  if (!window.confirm("This timetable still has conflicts. Mark as final anyway?")) return;
                 }
                 setPublished(true);
               }}
               disabled={!placements.length}
-              title={!placements.length ? "Nothing to publish yet" : undefined}
+              title={!placements.length ? "Nothing to mark as final yet" : undefined}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               <CheckCircle2 className="h-3.5 w-3.5" />
-              Publish
+              Mark as final
             </button>
           )}
         </div>

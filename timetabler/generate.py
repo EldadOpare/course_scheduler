@@ -438,7 +438,7 @@ def generate_options(ds: Dataset, locked: list[Placement] | None = None,
     locked_keys = {(p.course, p.section, p.kind, p.index) for p in locked}
     options: list[GenOption] = []
     for i, (label, overrides) in enumerate((profiles or PROFILES).items()):
-        rng = random.Random(seed + i * 101)
+        rng = random.Random(seed + i * 101)  # nosec B311 — deterministic scheduling RNG, not used for crypto
         res = _generate_one(ds, locked, overrides, max_nodes, rng)
         polished = _improve(ds, res.placements, locked_keys,
                             _weights(overrides), improve_seconds, rng)

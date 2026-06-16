@@ -70,10 +70,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return True
         try:
             self._send(fn(body))
-        except KeyError as e:
-            self._send({"error": f"missing or unknown field/id: {e}"}, 400)
+        except KeyError:
+            import traceback; traceback.print_exc()
+            self._send({"error": "missing required field"}, 400)
         except (TypeError, ValueError) as e:
-            self._send({"error": f"malformed request: {e}"}, 400)
+            msg = str(e) if isinstance(e, ValueError) else "malformed request"
+            self._send({"error": msg}, 400)
         except Exception:
             import traceback
             traceback.print_exc()
