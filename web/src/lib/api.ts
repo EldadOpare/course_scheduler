@@ -2,6 +2,7 @@ import type {
   Dataset, GenerateOption, Placement, PlaceOption, SimulateResult, ValidationResult,
 } from "@/types";
 
+
 async function post<T>(path: string, body: object): Promise<T> {
   const res = await fetch(`/api/${path}`, {
     method: "POST",
@@ -76,9 +77,3 @@ export function simulate(ds: Dataset): Promise<SimulateResult> {
   return post("simulate", ctx(ds));
 }
 
-export function explain(
-  placements: Placement[],
-  ds: Dataset,
-): Promise<{ summary: string | null; error: string | null }> {
-  return post("explain", { placements, ...ctx(ds) });
-}

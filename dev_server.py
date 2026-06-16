@@ -3,7 +3,7 @@
     python3 dev_server.py            # http://localhost:3000
 
 Serves web/dist/ as static files and routes /api/* to the same handlers the
-Vercel functions use (timetabler/web.py). Reads .env for XAI_API_KEY etc.
+Vercel functions use (timetabler/web.py). Reads .env for environment variables.
 """
 from __future__ import annotations
 
@@ -32,11 +32,10 @@ from timetabler import web  # noqa: E402  (needs .env loaded first)
 
 ROUTES = {
     "/api/validate": ("POST", web.validate_payload),
-    "/api/suggest": ("POST", web.suggest_payload),
-    "/api/place": ("POST", web.place_payload),
+    "/api/suggest":  ("POST", web.suggest_payload),
+    "/api/place":    ("POST", web.place_payload),
     "/api/generate": ("POST", web.generate_payload),
     "/api/simulate": ("POST", web.simulate_payload),
-    "/api/explain": ("POST", web.explain_payload),
 }
 
 

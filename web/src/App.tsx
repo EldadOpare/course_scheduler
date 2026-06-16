@@ -8,6 +8,7 @@ import Courses from "@/pages/Courses";
 import FacultyPage from "@/pages/Faculty";
 import Rooms from "@/pages/Rooms";
 import StudentsPage from "@/pages/Students";
+import HowToUse from "@/pages/HowToUse";
 import { Toaster } from "@/components/ui/toaster";
 import { useTimetable } from "@/store/timetable";
 import { loadDataset, listSessions, loadSessionPlacements, supabase } from "@/lib/supabase";
@@ -105,6 +106,7 @@ export default function App() {
           <Route element={<Layout><FacultyPage /></Layout>} path="/faculty" />
           <Route element={<Layout><Rooms /></Layout>} path="/classrooms" />
           <Route element={<Layout><StudentsPage /></Layout>} path="/students" />
+          <Route element={<Layout><HowToUse /></Layout>} path="/how-to-use" />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         <Toaster />

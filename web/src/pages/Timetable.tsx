@@ -1825,22 +1825,26 @@ export default function Timetable() {
                 Discard
               </button>
               <button
-                onClick={() => genOptions[previewIdx] && handleApplyOption(genOptions[previewIdx])}
+                onClick={() => { const o = genOptions?.[previewIdx]; if (o) handleApplyOption(o); }}
                 className="px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
               >
                 Use this timetable
               </button>
             </div>
           </div>
-          {genOptions[previewIdx]?.unplaced.length > 0 && (
-            <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-              Could not place: {genOptions[previewIdx].unplaced.slice(0, 4).map(u =>
-                `${u.course}${u.section > 1 ? ` (Cohort ${cohortLetter(u.section)})` : ""}`).join(", ")}
-              {genOptions[previewIdx].unplaced.length > 4 ? ` and ${genOptions[previewIdx].unplaced.length - 4} more` : ""}.
-            </p>
-          )}
+          {genOptions[previewIdx]?.unplaced.length > 0 && (() => {
+            const o = genOptions[previewIdx];
+            if (!o) return null;
+            return (
+              <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                Could not place: {o.unplaced.slice(0, 4).map(u =>
+                  `${u.course}${u.section > 1 ? ` (Cohort ${cohortLetter(u.section)})` : ""}`).join(", ")}
+                {o.unplaced.length > 4 ? ` and ${o.unplaced.length - 4} more` : ""}.
+              </p>
+            );
+          })()}
           {(() => {
-            const topPenalties = [...(genOptions[previewIdx]?.penalties ?? [])]
+            const topPenalties = [...(genOptions?.[previewIdx]?.penalties ?? [])]
               .sort((a, b) => b.weight - a.weight)
               .slice(0, 3);
             if (!topPenalties.length) return null;

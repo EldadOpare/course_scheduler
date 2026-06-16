@@ -7,7 +7,7 @@ from Supabase); the engine itself never touches disk or a database.
 """
 from __future__ import annotations
 
-from . import assist, engine, generate as gen, loader, suggest as sug, timegrid
+from . import engine, generate as gen, loader, suggest as sug, timegrid
 from .models import Placement, fmt_time, parse_time
 
 
@@ -288,14 +288,3 @@ def simulate_payload(body: dict) -> dict:
     }
 
 
-def explain_payload(body: dict) -> dict:
-    ds = _dataset(body)
-    placements = _parse_placements(body, ds)
-    if not assist.available():
-        return {"summary": None,
-                "error": "XAI_API_KEY is not set. Grok summaries are disabled."}
-    try:
-        summary = assist.explain(engine.report(ds, placements))
-    except Exception as e:  # network/API errors should never break the UI
-        return {"summary": None, "error": f"Grok request failed: {e}"}
-    return {"summary": summary, "error": None}

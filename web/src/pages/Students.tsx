@@ -414,7 +414,7 @@ function MajorsTab() {
               {YEARS.map(y => (
                 <Field key={y} label={`Year ${y}`}>
                   <input type="number" min={0} value={draft.counts[y] ?? ""}
-                    onChange={e => setDraft({ ...draft, counts: { ...draft.counts, [y]: Number(e.target.value) } })}
+                    onChange={e => setDraft({ ...draft, counts: { ...draft.counts, [y]: Math.max(0, parseInt(e.target.value, 10) || 0) } })}
                     placeholder="0" className={inputCls} />
                 </Field>
               ))}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import assist, engine, generate as gen, loader, suggest as sug
+from . import engine, generate as gen, loader, suggest as sug
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,8 +17,6 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("validate", help="check the timetable and score it")
-    p.add_argument("--explain", action="store_true",
-                   help="add a plain-English summary via Grok (needs XAI_API_KEY)")
 
     p = sub.add_parser("suggest", help="rank legal slots for one meeting")
     p.add_argument("course")
@@ -39,10 +37,6 @@ def main(argv: list[str] | None = None) -> int:
         placements = loader.load_timetable(args.data)
         text = engine.report(ds, placements)
         print(text)
-        if args.explain:
-            summary = assist.explain(text)
-            print("\n--- Grok summary ---")
-            print(summary if summary else "(XAI_API_KEY not set, skipped)")
         violations = engine.validate(ds, placements)
         return 1 if violations else 0
 

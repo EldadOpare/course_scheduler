@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, CalendarDays, BookOpen, Users, School, GraduationCap,
-  X, PanelLeftClose, PanelLeftOpen,
+  X, PanelLeftClose, PanelLeftOpen, HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ashLogo from "@/assets/ash_logo.png";
@@ -17,6 +17,10 @@ const DATA = [
   { to: "/faculty",    label: "Faculty",    icon: Users         },
   { to: "/classrooms", label: "Classrooms", icon: School        },
   { to: "/students",   label: "Students",   icon: GraduationCap },
+];
+
+const HELP = [
+  { to: "/how-to-use", label: "How to use", icon: HelpCircle },
 ];
 
 interface SidebarProps {
@@ -91,7 +95,7 @@ const Sidebar = ({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps)
       <nav className={cn("flex-1 py-2", collapsed ? "overflow-visible" : "overflow-y-auto")}>
         {collapsed ? (
           <div className="space-y-1 px-1.5">
-            {[...SCHEDULING, ...DATA].map(({ to, icon, label }) => (
+            {[...SCHEDULING, ...DATA, ...HELP].map(({ to, icon, label }) => (
               <NavItem key={to} to={to} icon={icon} label={label} collapsed onClick={() => isMobile && onClose()} />
             ))}
           </div>
@@ -113,6 +117,16 @@ const Sidebar = ({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps)
               </div>
               <div className="space-y-0.5">
                 {DATA.map(({ to, icon, label }) => (
+                  <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} onClick={() => isMobile && onClose()} />
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/50">
+                Help
+              </div>
+              <div className="space-y-0.5">
+                {HELP.map(({ to, icon, label }) => (
                   <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} onClick={() => isMobile && onClose()} />
                 ))}
               </div>
