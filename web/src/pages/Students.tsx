@@ -9,7 +9,7 @@ import EmptyState from "@/components/EmptyState";
 import SortIcon from "@/components/SortIcon";
 import { cn } from "@/lib/utils";
 import type {
-  YearGroup, Major, AcademicSemester, CoursePlan, ElectivePool,
+  YearGroup, Major, AcademicSemester, CoursePlan, ElectivePool, Course,
 } from "@/types";
 
 const YEARS = [1, 2, 3, 4];
@@ -707,9 +707,67 @@ function SemesterColumn({
 
 type PlanSection = "mandatory" | "major" | "free";
 
-function CoursePlanModal({ draft, setDraft, courseCodes, courseMap, isNew, onSave, onDelete, onClose }: {
+function CoursePickGrid({ courses, selected, onToggle }: {
+  courses: Course[]; selected: string[]; onToggle: (code: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const q = query.toLowerCase().trim();
+  const filtered = q
+    ? courses.filter(c => c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q))
+    : courses;
+  const byLevel = useMemo(() => {
+    const m = new Map<number, Course[]>();
+    for (const c of filtered) {
+      const lvl = c.level ?? 0;
+      if (!m.has(lvl)) m.set(lvl, []);
+      m.get(lvl)!.push(c);
+    }
+    return [...m.entries()].sort(([a], [b]) => a - b);
+  }, [filtered]);
+
+  return (
+    <div className="space-y-3">
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60 pointer-events-none" />
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search courses…"
+          className="w-full pl-8 pr-3 py-2 text-xs border border-border rounded-lg bg-background outline-none focus:border-primary/50"
+        />
+      </div>
+      {byLevel.length === 0 && (
+        <p className="text-xs text-muted-foreground italic">No courses match.</p>
+      )}
+      {byLevel.map(([lvl, group]) => (
+        <div key={lvl}>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+            {lvl > 0 ? `Year ${lvl}` : "Other"}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {group.map(c => {
+              const on = selected.includes(c.code);
+              return (
+                <button key={c.code} type="button" onClick={() => onToggle(c.code)}
+                  title={c.title}
+                  className={cn("flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs border transition-all",
+                    on ? "bg-primary/10 border-primary/30 text-primary" : "border-border text-muted-foreground hover:bg-muted/60")}>
+                  {on && <Check className="h-2.5 w-2.5 shrink-0" />}
+                  <span className="font-mono">{c.code}</span>
+                  <span className="text-[10px] opacity-60 truncate max-w-[140px]">{c.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CoursePlanModal({ draft, setDraft, courses, isNew, onSave, onDelete, onClose }: {
   draft: CoursePlan; setDraft: (p: CoursePlan) => void;
-  courseCodes: string[]; courseMap: Record<string, string>;
+  courses: Course[];
   isNew: boolean; onSave: () => void; onDelete?: () => void; onClose: () => void;
 }) {
   const [section, setSection] = useState<PlanSection>("mandatory");
@@ -778,23 +836,10 @@ function CoursePlanModal({ draft, setDraft, courseCodes, courseMap, isNew, onSav
       {section === "mandatory" && (
         <section className="space-y-3">
           <SectionLabel>Mandatory courses (all students take these)</SectionLabel>
-          {!courseCodes.length
+          {!courses.length
             ? <p className="text-xs text-muted-foreground italic">No courses in dataset.</p>
-            : (
-              <div className="flex flex-wrap gap-1.5">
-                {courseCodes.map(code => {
-                  const on = draft.mandatory.includes(code);
-                  return (
-                    <button key={code} type="button" onClick={() => toggleMandatory(code)}
-                      className={cn("flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono border transition-all",
-                        on ? "bg-primary/10 border-primary/30 text-primary" : "border-border text-muted-foreground hover:bg-muted/60")}>
-                      {on && <Check className="h-2.5 w-2.5 shrink-0" />}
-                      {code}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            : <CoursePickGrid courses={courses} selected={draft.mandatory} onToggle={toggleMandatory} />
+          }
         </section>
       )}
 
@@ -831,19 +876,11 @@ function CoursePlanModal({ draft, setDraft, courseCodes, courseMap, isNew, onSav
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {courseCodes.map(code => {
-                  const on = pool.courses.includes(code);
-                  return (
-                    <button key={code} type="button" onClick={() => togglePoolCourse(pool.id, code)}
-                      className={cn("flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono border transition-all",
-                        on ? "bg-primary/10 border-primary/30 text-primary" : "border-border text-muted-foreground hover:bg-muted/60")}>
-                      {on && <Check className="h-2.5 w-2.5 shrink-0" />}
-                      {code}
-                    </button>
-                  );
-                })}
-              </div>
+              <CoursePickGrid
+                courses={courses}
+                selected={pool.courses}
+                onToggle={code => togglePoolCourse(pool.id, code)}
+              />
             </div>
           ))}
         </section>
@@ -860,13 +897,18 @@ function CoursePlansTab() {
 
   const majors = dataset?.majors ?? [];
   const plans = dataset?.course_plans ?? [];
-  const courseCodes = useMemo(() => (dataset?.courses ?? []).map(c => c.code).sort(), [dataset]);
+  const coursesSorted = useMemo(
+    () => [...(dataset?.courses ?? [])].sort((a, b) => a.level - b.level || a.code.localeCompare(b.code)),
+    [dataset],
+  );
   const courseMap = useMemo(
     () => Object.fromEntries((dataset?.courses ?? []).map(c => [c.code, c.title])),
     [dataset],
   );
 
-  const activeMajorId = majorId || majors[0]?.id || "";
+  const activeMajorId = majorId
+    || majors.find(m => m.name.toLowerCase().includes("computer science"))?.id
+    || majors[0]?.id || "";
 
   function getPlan(semester: 1 | 2) {
     return plans.find(p => p.major_id === activeMajorId && p.year === year && p.semester === semester) ?? null;
@@ -938,8 +980,7 @@ function CoursePlansTab() {
         <CoursePlanModal
           draft={editPlan.plan}
           setDraft={plan => setEditPlan({ ...editPlan, plan })}
-          courseCodes={courseCodes}
-          courseMap={courseMap}
+          courses={coursesSorted}
           isNew={editPlan.isNew}
           onSave={() => { upsertCoursePlan(editPlan.plan); setEditPlan(null); }}
           onDelete={() => { removeCoursePlan(editPlan.plan.id); setEditPlan(null); }}

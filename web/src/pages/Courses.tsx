@@ -19,7 +19,7 @@ const COURSE_TYPES = [
 const PROGRAMS = ["csis", "hss", "ba", "econ", "engr", "law", "mba"];
 
 const EMPTY: Course = {
-  code: "", title: "", type: "liberal_arts_core", program: "csis", level: 100,
+  code: "", title: "", type: "liberal_arts_core", program: "csis", level: 1,
   majors: [], prerequisites: [], credits: 1, expected_enrollment: 30,
   sections: 1, sessions: { lecture: 2 }, requires_room_type: "", intake: "september",
 };

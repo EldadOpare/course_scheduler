@@ -43,9 +43,11 @@ interface TimetableState {
   deleteCurrentSession: () => Promise<void>;
   setPublished:   (published: boolean) => void;
 
+  placementHistory: Placement[][];
   upsertPlacement: (p: Placement) => void;
   removePlacement: (key: string) => void;
   applyDraft:      (placements: Placement[]) => void;
+  undoPlacement:   () => void;
   updateRules:     (rules: SchedulingRules) => void;
 
   upsertRoom:       (r: Room) => void;
@@ -65,15 +67,16 @@ interface TimetableState {
 }
 
 export const useTimetable = create<TimetableState>((set, get) => ({
-  dataset:     null,
-  placements:  [],
-  validation:  null,
-  semesterId:  null,
-  isLoading:   false,
-  sessions:    [],
-  currentSession: null,
-  activeCourses: null,
-  activeRooms:   null,
+  dataset:          null,
+  placements:       [],
+  placementHistory: [],
+  validation:       null,
+  semesterId:       null,
+  isLoading:        false,
+  sessions:         [],
+  currentSession:   null,
+  activeCourses:    null,
+  activeRooms:      null,
 
   setDataset:    (ds) => set({ dataset: ds }),
   setValidation: (v)  => set({ validation: v }),
@@ -114,7 +117,7 @@ export const useTimetable = create<TimetableState>((set, get) => ({
       currentSession: s, semesterId: s.id,
       activeCourses: s.active_courses ?? null,
       activeRooms: s.active_rooms ?? null,
-      validation: null, placements: [],
+      validation: null, placements: [], placementHistory: [],
     });
     const saved = await loadSessionPlacements(s.id);
     // Only keep if we're still on this session (avoids races when switching fast).
@@ -128,7 +131,7 @@ export const useTimetable = create<TimetableState>((set, get) => ({
       sessions: [created, ...get().sessions],
       currentSession: created, semesterId: created.id,
       activeCourses: null, activeRooms: null,
-      placements: [], validation: null,
+      placements: [], validation: null, placementHistory: [],
     });
   },
 
@@ -166,24 +169,36 @@ export const useTimetable = create<TimetableState>((set, get) => ({
 
   upsertPlacement: (p) => {
     const k = mkKey(p);
-    set((s) => ({ placements: [...s.placements.filter(x => mkKey(x) !== k), p] }));
+    const prev = get().placements;
+    const next = [...prev.filter(x => mkKey(x) !== k), p];
+    set({ placements: next, placementHistory: [...get().placementHistory.slice(-19), prev] });
     const sid = get().semesterId;
     if (sid && sid !== "offline") persistPlacement(sid, p);
   },
   removePlacement: (key) => {
-    set((s) => ({ placements: s.placements.filter(x => mkKey(x) !== key) }));
+    const prev = get().placements;
+    set({ placements: prev.filter(x => mkKey(x) !== key), placementHistory: [...get().placementHistory.slice(-19), prev] });
     const sid = get().semesterId;
     const [course, sec, kind, idx] = key.split("|");
     if (sid && sid !== "offline") deletePlacement(sid, course, Number(sec), kind, Number(idx));
   },
 
-  // I replaced the whole timetable in one shot here (instead of one
-  // upsert per meeting) so applying a generated draft felt instant and
-  // never left half-saved leftovers in the database.
+  // Replace the whole timetable in one shot so applying a generated draft
+  // is instant and never leaves half-saved leftovers in the database.
   applyDraft: (placements) => {
-    set({ placements, validation: null });
+    const prev = get().placements;
+    set({ placements, validation: null, placementHistory: [...get().placementHistory.slice(-19), prev] });
     const sid = get().semesterId;
     if (sid && sid !== "offline") replaceSessionPlacements(sid, placements);
+  },
+
+  undoPlacement: () => {
+    const history = get().placementHistory;
+    if (!history.length) return;
+    const prev = history[history.length - 1];
+    set({ placements: prev, placementHistory: history.slice(0, -1), validation: null });
+    const sid = get().semesterId;
+    if (sid && sid !== "offline") replaceSessionPlacements(sid, prev);
   },
 
   updateRules: (rules) => {

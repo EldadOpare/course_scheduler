@@ -117,7 +117,7 @@ export default function Dashboard() {
         {/* week + to-do */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2">
-            <WeekGlance placements={placements} />
+            <WeekGlance placements={placements} activeCourses={activeCourses} />
           </div>
           <TodoCard todos={todos} onOpen={() => navigate("/timetable")} />
         </div>
@@ -178,7 +178,7 @@ function StatusHero({
   );
 }
 
-function WeekGlance({ placements }: { placements: Placement[] }) {
+function WeekGlance({ placements, activeCourses }: { placements: Placement[]; activeCourses: Record<string, number> | null }) {
   const { dataset } = useTimetable();
   const roomName = useMemo(
     () => new Map((dataset?.rooms ?? []).map(r => [r.id, r.name])),
@@ -190,15 +190,21 @@ function WeekGlance({ placements }: { placements: Placement[] }) {
   );
   const days = dataset?.timegrid?.weekdays ?? ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
+  // Only show placements for courses selected this semester.
+  const visiblePlacements = useMemo(() => {
+    if (!activeCourses) return placements;
+    return placements.filter(p => p.course in activeCourses);
+  }, [placements, activeCourses]);
+
   const byDay = useMemo(() => {
     const m = new Map<string, Placement[]>();
     for (const d of days) m.set(d, []);
-    for (const p of placements) {
+    for (const p of visiblePlacements) {
       if (m.has(p.day)) m.get(p.day)!.push(p);
     }
     for (const list of m.values()) list.sort((a, b) => pmTime(a.start) - pmTime(b.start));
     return m;
-  }, [placements, days]);
+  }, [visiblePlacements, days]);
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 h-full">
@@ -206,7 +212,7 @@ function WeekGlance({ placements }: { placements: Placement[] }) {
         <CalendarDays className="h-4 w-4 text-muted-foreground" />
         <span className="text-sm text-foreground">This week at a glance</span>
       </div>
-      {!placements.length ? (
+      {!visiblePlacements.length ? (
         <div className="py-10 text-center">
           <CalendarDays className="h-6 w-6 text-muted-foreground/30 mx-auto mb-2" />
           <p className="text-xs text-muted-foreground">Nothing scheduled yet.</p>

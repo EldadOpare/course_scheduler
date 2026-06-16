@@ -9,7 +9,7 @@ import {
   CalendarDays, ChevronDown, ChevronRight, X, Loader2, Search, Check,
   Wand2, Download, CheckCircle2, AlertTriangle, Bookmark, FilterX, Trash2, CheckCheck,
   ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon, UserCheck, Wrench,
-  Pencil, Printer, Lock,
+  Pencil, Printer, Lock, Undo2,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import {
@@ -753,14 +753,38 @@ function AvailabilityModal({
     () => new Set(activeRooms ?? dataset.rooms.map(r => r.id)),
   );
 
+  // Quick-select from a course plan
+  const planMajors = dataset.majors ?? [];
+  const planCourseList = dataset.course_plans ?? [];
+  const [planMajorId, setPlanMajorId] = useState(
+    () => planMajors.find(m => m.name.toLowerCase().includes("computer science"))?.id
+      || planMajors[0]?.id || ""
+  );
+  const [planYear, setPlanYear] = useState(1);
+
+  const planCourseCount = useMemo(() => {
+    const codes = new Set<string>();
+    for (const plan of (dataset.course_plans ?? []).filter(p => p.major_id === planMajorId && p.year === planYear)) {
+      plan.mandatory.forEach(c => codes.add(c));
+      plan.elective_pools.forEach(pool => pool.courses.forEach(c => codes.add(c)));
+    }
+    return codes.size;
+  }, [dataset.course_plans, planMajorId, planYear]);
+
+  const addFromPlan = () => {
+    const codes = new Set<string>();
+    for (const plan of (dataset.course_plans ?? []).filter(p => p.major_id === planMajorId && p.year === planYear)) {
+      plan.mandatory.forEach(c => codes.add(c));
+      plan.elective_pools.forEach(pool => pool.courses.forEach(c => codes.add(c)));
+    }
+    setCourseSel(prev => new Set([...prev, ...codes]));
+  };
+
+  // New picks default to 1 cohort; existing picks keep their count.
   const save = () => {
-    // Keep any cohort counts already chosen; new picks default to the
-    // course's catalogue section count (cohorts are fine-tuned in the tray).
     const out: Record<string, number> = {};
     for (const code of courseSel) {
-      out[code] = activeCourses?.[code]
-        ?? dataset.courses.find(c => c.code === code)?.sections
-        ?? 1;
+      out[code] = activeCourses?.[code] ?? 1;
     }
     onSave(out, [...roomSel]);
   };
@@ -782,12 +806,48 @@ function AvailabilityModal({
           </button>
         </div>
 
+        {/* Quick-select from a course plan */}
+        {planMajors.length > 0 && planCourseList.length > 0 && (
+          <div className="px-4 py-3 border-b border-border shrink-0 flex items-center gap-3 flex-wrap">
+            <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 shrink-0">From plan</span>
+            <select
+              value={planMajorId}
+              onChange={e => setPlanMajorId(e.target.value)}
+              className="text-xs border border-border rounded-lg px-2 py-1.5 bg-background text-foreground"
+            >
+              {planMajors.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <div className="flex rounded-lg border border-border overflow-hidden text-xs bg-card">
+              {[1, 2, 3, 4].map(y => (
+                <button
+                  key={y}
+                  onClick={() => setPlanYear(y)}
+                  className={cn("px-2.5 py-1.5 transition-colors",
+                    planYear === y ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+                >
+                  Y{y}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={addFromPlan}
+              disabled={planCourseCount === 0}
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-border bg-card hover:bg-primary/5 text-foreground transition-colors disabled:opacity-50"
+            >
+              <PlusIcon className="h-3 w-3" />
+              {planCourseCount > 0 ? `Add ${planCourseCount} from Y${planYear} plan` : "No courses in plan"}
+            </button>
+            <span className="text-[10px] text-muted-foreground/60">· or use All / None in the list below</span>
+          </div>
+        )}
+
         <div className="flex-1 min-h-0 flex gap-4 p-4">
           <PickList
             title="Courses"
             items={dataset.courses}
             idOf={c => c.code}
             labelOf={c => `${c.code} · ${c.title}`}
+            subOf={c => `Y${c.level}`}
             selected={courseSel}
             onChange={setCourseSel}
           />
@@ -1034,7 +1094,8 @@ function ClearBoardModal({
 
 export default function Timetable() {
   const {
-    placements, dataset, validation, upsertPlacement, removePlacement, applyDraft, setValidation,
+    placements, placementHistory, dataset, validation,
+    upsertPlacement, removePlacement, applyDraft, undoPlacement, setValidation,
     activeCourses, activeRooms, setActiveCourses, setActiveRooms,
     sessions, currentSession, switchSession, newSession, renameCurrentSession,
     deleteCurrentSession, setPublished,
@@ -1056,8 +1117,9 @@ export default function Timetable() {
   const [availOpen, setAvailOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [lecturersOpen, setLecturersOpen] = useState(false);
-  const [view, setView] = useState<"week" | "day">("week");
+  const [view, setView] = useState<"week" | "day">("day");
   const [dayFocus, setDayFocus] = useState("Mon");
+  const [weekDayFocus, setWeekDayFocus] = useState("");
   const [filterMajor, setFilterMajor] = useState("");
   const [filterYear, setFilterYear] = useState(0);
   const [filterFaculty, setFilterFaculty] = useState("");
@@ -1070,6 +1132,18 @@ export default function Timetable() {
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
 
+  // Cmd/Ctrl+Z to undo the last placement change.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey && !published) {
+        e.preventDefault();
+        undoPlacement();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [undoPlacement, published]);
+
   const durations = dataset?.durations ?? DURATIONS;
 
   // What's in play this semester. The engine only sees the courses the
@@ -1081,12 +1155,19 @@ export default function Timetable() {
     const placedCourses = new Set(placements.map(p => p.course));
     const placedRooms = new Set(placements.map(p => p.room));
     const roomSet = activeRooms ? new Set(activeRooms) : null;
-    // Override each picked course's section count with the chosen cohorts.
+    // Override each picked course's section count with the chosen cohorts, and
+    // scale expected_enrollment so the validator's H-ROOM-2 check fires at the
+    // correct per-cohort size (total enrollment is conserved across splits).
     const courses = dataset.courses
       .filter(c => (activeCourses && c.code in activeCourses) || placedCourses.has(c.code))
-      .map(c => activeCourses && c.code in activeCourses
-        ? { ...c, sections: activeCourses[c.code] }
-        : c);
+      .map(c => {
+        if (activeCourses && c.code in activeCourses) {
+          const numCohorts = activeCourses[c.code];
+          const totalEnrollment = c.sections * c.expected_enrollment;
+          return { ...c, sections: numCohorts, expected_enrollment: Math.ceil(totalEnrollment / numCohorts) };
+        }
+        return c;
+      });
     return {
       ...dataset,
       courses,
@@ -1105,7 +1186,7 @@ export default function Timetable() {
       .map(c => ({ ...c, sections: activeCourses[c.code] }));
   }, [dataset, activeCourses]);
 
-  // Rooms shown as columns in the day view.
+  // Rooms shown as columns in the day view and in the room filter dropdown.
   const semesterRooms = useMemo(() => {
     if (!dataset) return [];
     if (!activeRooms) return dataset.rooms;
@@ -1113,6 +1194,18 @@ export default function Timetable() {
     const placedRooms = new Set(placements.map(p => p.room));
     return dataset.rooms.filter(r => sel.has(r.id) || placedRooms.has(r.id));
   }, [dataset, activeRooms, placements]);
+
+  // Faculty eligible to filter by: approved for an active course OR already assigned.
+  const semesterFaculty = useMemo(() => {
+    if (!dataset) return [];
+    const activeCodes = new Set(Object.keys(activeCourses ?? {}));
+    const assignedIds = new Set(placements.map(p => p.faculty));
+    return dataset.faculty.filter(f =>
+      f.id !== UNASSIGNED &&
+      f.type !== "faculty_intern" &&
+      (f.approved_courses.some(c => activeCodes.has(c)) || assignedIds.has(f.id))
+    );
+  }, [dataset, activeCourses, placements]);
 
   // I derived the grid's columns and rows from the timegrid settings (and
   // I keyed days by the short names the engine uses, because keying them
@@ -1224,6 +1317,18 @@ export default function Timetable() {
     () => new Map((dataset?.rooms ?? []).map(r => [r.id, r.name])),
     [dataset],
   );
+
+  // Peak per-cohort enrollment for each room on the focused day (for the gauge).
+  const roomPeakEnrollment = useMemo(() => {
+    if (!engineDataset) return new Map<string, number>();
+    const enrollOf = new Map(engineDataset.courses.map(c => [c.code, c.expected_enrollment]));
+    const peak = new Map<string, number>();
+    for (const p of boardPlacements.filter(pl => pl.day === dayFocus)) {
+      const enroll = enrollOf.get(p.course) ?? 0;
+      peak.set(p.room, Math.max(peak.get(p.room) ?? 0, enroll));
+    }
+    return peak;
+  }, [engineDataset, boardPlacements, dayFocus]);
 
   const handleDragStart = useCallback((e: DragStartEvent) => {
     const d = e.active.data.current;
@@ -1389,7 +1494,7 @@ export default function Timetable() {
   // so cohorts stay adjustable after placement.
   const unscheduledGroups = useMemo(() => {
     const groups: {
-      code: string; title: string; sections: number;
+      code: string; title: string; sections: number; enrollment: number;
       sessionCount: Record<string, number>; items: InspectorTarget[];
     }[] = [];
     for (const c of semesterCourses) {
@@ -1403,7 +1508,7 @@ export default function Timetable() {
           }
         }
       }
-      groups.push({ code: c.code, title: c.title, sections: c.sections, sessionCount: c.sessions, items });
+      groups.push({ code: c.code, title: c.title, sections: c.sections, enrollment: c.expected_enrollment, sessionCount: c.sessions, items });
     }
     return groups;
   }, [semesterCourses, scheduled]);
@@ -1533,6 +1638,17 @@ export default function Timetable() {
                 {autoFixing ? "Fixing…" : "Auto-fix conflicts"}
               </button>
             </>
+          )}
+          {!published && (
+            <button
+              onClick={undoPlacement}
+              disabled={!placementHistory.length}
+              title={placementHistory.length ? "Undo last change (⌘Z)" : "Nothing to undo"}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-40"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+              Undo
+            </button>
           )}
           <button
             onClick={() => dataset && exportCsv(filterActive ? visiblePlacements : placements, dataset)}
@@ -1681,6 +1797,23 @@ export default function Timetable() {
               {genOptions[previewIdx].unplaced.length > 4 ? ` and ${genOptions[previewIdx].unplaced.length - 4} more` : ""}.
             </p>
           )}
+          {(() => {
+            const topPenalties = [...(genOptions[previewIdx]?.penalties ?? [])]
+              .sort((a, b) => b.weight - a.weight)
+              .slice(0, 3);
+            if (!topPenalties.length) return null;
+            return (
+              <div className="flex items-start gap-2 mt-1.5 flex-wrap">
+                <span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/60 mt-0.5 shrink-0">Penalties</span>
+                {topPenalties.map((p, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded px-1.5 py-0.5">
+                    <span className="font-medium tabular-nums">+{p.weight}</span>
+                    <span className="text-amber-600/80 dark:text-amber-400/70">{p.message}</span>
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1732,20 +1865,29 @@ export default function Timetable() {
           </button>
         </div>
 
-        {view === "day" && (
-          <div className="flex rounded-lg border border-border overflow-hidden bg-card text-xs">
-            {days.map(d => (
-              <button
-                key={d}
-                onClick={() => setDayFocus(d)}
-                className={cn("px-2.5 py-1.5 transition-colors",
-                  dayFocus === d ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Day picker — for by-room view (required) and week view (optional "All") */}
+        <div className="flex rounded-lg border border-border overflow-hidden bg-card text-xs">
+          {view === "week" && (
+            <button
+              onClick={() => setWeekDayFocus("")}
+              className={cn("px-2.5 py-1.5 transition-colors",
+                !weekDayFocus ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+            >
+              All
+            </button>
+          )}
+          {days.map(d => (
+            <button
+              key={d}
+              onClick={() => view === "day" ? setDayFocus(d) : setWeekDayFocus(d)}
+              className={cn("px-2.5 py-1.5 transition-colors",
+                (view === "day" ? dayFocus === d : weekDayFocus === d)
+                  ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
 
         <div className="w-px h-4 bg-border/60 mx-1" />
         <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">View by</span>
@@ -1760,7 +1902,7 @@ export default function Timetable() {
           )}
         >
           <option value="">All lecturers</option>
-          {(dataset?.faculty ?? []).map(f => (
+          {semesterFaculty.map(f => (
             <option key={f.id} value={f.id}>{f.name}</option>
           ))}
         </select>
@@ -1774,7 +1916,7 @@ export default function Timetable() {
           )}
         >
           <option value="">All rooms</option>
-          {(dataset?.rooms ?? []).map(r => (
+          {semesterRooms.map(r => (
             <option key={r.id} value={r.id}>{r.name}</option>
           ))}
         </select>
@@ -1788,7 +1930,7 @@ export default function Timetable() {
           )}
         >
           <option value="">All courses</option>
-          {(dataset?.courses ?? []).map(c => (
+          {semesterCourses.map(c => (
             <option key={c.code} value={c.code}>{c.code} · {c.title}</option>
           ))}
         </select>
@@ -1894,9 +2036,17 @@ export default function Timetable() {
                             >
                               <Minus className="h-2.5 w-2.5" />
                             </button>
-                            <span className="min-w-[58px] text-center text-[10px] tabular-nums text-foreground whitespace-nowrap">
-              {g.sections} cohort{g.sections !== 1 ? "s" : ""}
-            </span>
+                            <span
+                              title={g.enrollment > 0 ? `~${Math.ceil(g.enrollment / g.sections)} students per cohort` : "Cohorts this semester"}
+                              className="min-w-[58px] text-center text-[10px] tabular-nums text-foreground whitespace-nowrap leading-tight"
+                            >
+                              {g.sections} cohort{g.sections !== 1 ? "s" : ""}
+                              {g.enrollment > 0 && (
+                                <span className="block text-[9px] text-muted-foreground/60 tabular-nums">
+                                  ~{Math.ceil(g.enrollment / g.sections)} ea
+                                </span>
+                              )}
+                            </span>
                             <button
                               onClick={() => setCourseCohorts(g.code, g.sections + 1)}
                               disabled={g.sections >= 26}
@@ -1935,68 +2085,76 @@ export default function Timetable() {
           {/* grid */}
           <div className="flex-1 overflow-auto">
             {view === "week" ? (
-              <div className="min-w-max">
-                <div className="flex border-b border-border sticky top-0 bg-background z-10">
-                  <div className="w-14 shrink-0" />
-                  {days.map(d => (
-                    <div key={d} style={{ width: COL_W }}
-                      className="shrink-0 px-3 py-2.5 text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 border-r border-border last:border-r-0">
-                      {DAY_LABEL[d] ?? d}
+              (() => {
+                // When a specific day is focused, show it alone at a wider width
+                // so cards are fully readable instead of crushed into 160 px columns.
+                const wDays = weekDayFocus ? [weekDayFocus] : days;
+                const wColW = weekDayFocus ? 520 : COL_W;
+                return (
+                  <div className="min-w-max">
+                    <div className="flex border-b border-border sticky top-0 bg-background z-10">
+                      <div className="w-14 shrink-0" />
+                      {wDays.map(d => (
+                        <div key={d} style={{ width: wColW }}
+                          className="shrink-0 px-3 py-2.5 text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70 border-r border-border last:border-r-0">
+                          {DAY_LABEL[d] ?? d}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <div className="flex">
-                  {/* time gutter: labels on the hour */}
-                  <div className="w-14 shrink-0 sticky left-0 bg-background z-10 border-r border-border/30">
-                    {times.map(t => (
-                      <div
-                        key={t}
-                        style={{ height: ROW_H }}
-                        className={cn(
-                          "px-2 flex items-start justify-end pt-0.5 text-[10px] font-mono text-muted-foreground/70 border-t",
-                          t % 60 === 0 ? "border-border/30" : "border-border/10",
-                        )}
-                      >
-                        {t % 60 === 0 ? toHHMM(t) : ""}
+                    <div className="flex">
+                      {/* time gutter */}
+                      <div className="w-14 shrink-0 sticky left-0 bg-background z-10 border-r border-border/30">
+                        {times.map(t => (
+                          <div
+                            key={t}
+                            style={{ height: ROW_H }}
+                            className={cn(
+                              "px-2 flex items-start justify-end pt-0.5 text-[10px] font-mono text-muted-foreground/70 border-t",
+                              t % 60 === 0 ? "border-border/30" : "border-border/10",
+                            )}
+                          >
+                            {t % 60 === 0 ? toHHMM(t) : ""}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  {/* one continuous column per day; chips sit at their exact minute */}
-                  {days.map(day => (
-                    <div
-                      key={day}
-                      style={{ width: COL_W, height: times.length * ROW_H }}
-                      className="relative shrink-0 border-r border-border/30 last:border-r-0"
-                    >
-                      {times.map((t, i) => (
-                        <DropCell key={t} day={day} timeMin={t} top={i * ROW_H} hour={t % 60 === 0} />
-                      ))}
-                      {slots.filter(s => s.placement.day === day).map(s => (
-                        <PlacementChip
-                          key={mkKey(s.placement)}
-                          placement={s.placement}
-                          lane={s.lane}
-                          lanes={s.lanes}
-                          top={((toMin(s.placement.start) - times[0]) / SLOT_MIN) * ROW_H}
-                          duration={durations[s.placement.kind]}
-                          cohort={multiSection.has(s.placement.course) ? cohortLetter(s.placement.section) : undefined}
-                          facultyName={facultyOf.get(s.placement.faculty)}
-                          roomName={roomOf.get(s.placement.room)}
-                          flagged={flagged.has(mkKey(s.placement))}
-                          onClick={previewing || published ? undefined : () => setInspector({
-                            courseCode: s.placement.course,
-                            section: s.placement.section,
-                            kind: s.placement.kind,
-                            index: s.placement.index,
-                            day: s.placement.day,
-                            startStr: s.placement.start,
-                          })}
-                        />
+                      {/* one column per visible day */}
+                      {wDays.map(day => (
+                        <div
+                          key={day}
+                          style={{ width: wColW, height: times.length * ROW_H }}
+                          className="relative shrink-0 border-r border-border/30 last:border-r-0"
+                        >
+                          {times.map((t, i) => (
+                            <DropCell key={t} day={day} timeMin={t} top={i * ROW_H} hour={t % 60 === 0} />
+                          ))}
+                          {slots.filter(s => s.placement.day === day).map(s => (
+                            <PlacementChip
+                              key={mkKey(s.placement)}
+                              placement={s.placement}
+                              lane={s.lane}
+                              lanes={s.lanes}
+                              top={((toMin(s.placement.start) - times[0]) / SLOT_MIN) * ROW_H}
+                              duration={durations[s.placement.kind]}
+                              cohort={multiSection.has(s.placement.course) ? cohortLetter(s.placement.section) : undefined}
+                              facultyName={facultyOf.get(s.placement.faculty)}
+                              roomName={roomOf.get(s.placement.room)}
+                              flagged={flagged.has(mkKey(s.placement))}
+                              onClick={previewing || published ? undefined : () => setInspector({
+                                courseCode: s.placement.course,
+                                section: s.placement.section,
+                                kind: s.placement.kind,
+                                index: s.placement.index,
+                                day: s.placement.day,
+                                startStr: s.placement.start,
+                              })}
+                            />
+                          ))}
+                        </div>
                       ))}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                );
+              })()
             ) : (
               /* by-room view: one column per classroom for the focused day,
                  so ten rooms all teaching at 08:00 read as ten side-by-side
@@ -2004,13 +2162,31 @@ export default function Timetable() {
               <div className="min-w-max">
                 <div className="flex border-b border-border sticky top-0 bg-background z-10">
                   <div className="w-14 shrink-0" />
-                  {semesterRooms.map(r => (
-                    <div key={r.id} style={{ width: COL_W }}
-                      className="shrink-0 px-3 py-2 border-r border-border last:border-r-0">
-                      <div className="text-[11px] text-foreground truncate">{r.name}</div>
-                      <div className="text-[9px] text-muted-foreground/60">{r.capacity} seats · {r.type.replace(/_/g, " ")}</div>
-                    </div>
-                  ))}
+                  {semesterRooms.map(r => {
+                    const peak = roomPeakEnrollment.get(r.id) ?? 0;
+                    const pct = r.capacity > 0 ? Math.min(1, peak / r.capacity) : 0;
+                    const over = peak > r.capacity;
+                    return (
+                      <div key={r.id} style={{ width: COL_W }}
+                        className="shrink-0 px-3 py-2 border-r border-border last:border-r-0">
+                        <div className="text-[11px] text-foreground truncate">{r.name}</div>
+                        <div className="text-[9px] text-muted-foreground/60 mb-1">{r.capacity} seats · {r.type.replace(/_/g, " ")}</div>
+                        {peak > 0 && (
+                          <div title={`Peak: ${peak} / ${r.capacity} seats`}>
+                            <div className="h-1 rounded-full bg-muted overflow-hidden">
+                              <div
+                                className={cn("h-full rounded-full transition-all", over ? "bg-destructive" : pct > 0.85 ? "bg-amber-500" : "bg-primary/60")}
+                                style={{ width: `${Math.min(100, pct * 100)}%` }}
+                              />
+                            </div>
+                            <div className={cn("text-[9px] tabular-nums mt-0.5", over ? "text-destructive" : "text-muted-foreground/60")}>
+                              {peak}/{r.capacity}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="flex">
                   <div className="w-14 shrink-0 sticky left-0 bg-background z-10 border-r border-border/30">
