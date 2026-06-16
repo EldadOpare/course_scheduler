@@ -712,18 +712,19 @@ function CoursePickGrid({ courses, selected, onToggle }: {
 }) {
   const [query, setQuery] = useState("");
   const q = query.toLowerCase().trim();
-  const filtered = q
-    ? courses.filter(c => c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q))
-    : courses;
   const byLevel = useMemo(() => {
-    const m = new Map<number, Course[]>();
-    for (const c of filtered) {
+    const list = q
+      ? courses.filter(c => c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q))
+      : courses;
+    const groups: Record<number, Course[]> = {};
+    for (const c of list) {
       const lvl = c.level ?? 0;
-      if (!m.has(lvl)) m.set(lvl, []);
-      m.get(lvl)!.push(c);
+      (groups[lvl] ??= []).push(c);
     }
-    return [...m.entries()].sort(([a], [b]) => a - b);
-  }, [filtered]);
+    return (Object.entries(groups) as [string, Course[]][])
+      .map(([k, v]) => [Number(k), v] as [number, Course[]])
+      .sort(([a], [b]) => a - b);
+  }, [courses, q]);
 
   return (
     <div className="space-y-3">

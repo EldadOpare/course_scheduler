@@ -1179,12 +1179,24 @@ export default function Timetable() {
 
   // The picked courses (with cohort overrides) drive the unscheduled tray.
   // Nothing picked yet → empty tray.
+  // Courses active for this session — drives the unscheduled tray and generate.
   const semesterCourses = useMemo(() => {
     if (!dataset || !activeCourses) return [];
     return dataset.courses
       .filter(c => c.code in activeCourses)
       .map(c => ({ ...c, sections: activeCourses[c.code] }));
   }, [dataset, activeCourses]);
+
+  // Wider course list for the filter dropdown: active courses + anything
+  // currently placed (covers drafts applied before picking activeCourses,
+  // and courses that were removed from activeCourses but still have placements).
+  const filterableCourses = useMemo(() => {
+    if (!dataset) return [];
+    const activeCodes = new Set(Object.keys(activeCourses ?? {}));
+    const placedCodes = new Set(placements.map(p => p.course));
+    const allCodes = new Set([...activeCodes, ...placedCodes]);
+    return dataset.courses.filter(c => allCodes.has(c.code));
+  }, [dataset, activeCourses, placements]);
 
   // Rooms shown as columns in the day view and in the room filter dropdown.
   const semesterRooms = useMemo(() => {
@@ -1206,6 +1218,25 @@ export default function Timetable() {
       (f.approved_courses.some(c => activeCodes.has(c)) || assignedIds.has(f.id))
     );
   }, [dataset, activeCourses, placements]);
+
+  // Clear filter values that reference entities no longer visible in the
+  // scoped lists. Guard on `dataset` (not list length) so we only act once
+  // data is loaded — an empty list after load means the value is genuinely stale.
+  useEffect(() => {
+    if (dataset && filterFaculty && !semesterFaculty.some(f => f.id === filterFaculty)) {
+      setFilterFaculty("");
+    }
+  }, [dataset, semesterFaculty, filterFaculty]);
+  useEffect(() => {
+    if (dataset && filterRoom && !semesterRooms.some(r => r.id === filterRoom)) {
+      setFilterRoom("");
+    }
+  }, [dataset, semesterRooms, filterRoom]);
+  useEffect(() => {
+    if (dataset && filterCourse && !filterableCourses.some(c => c.code === filterCourse)) {
+      setFilterCourse("");
+    }
+  }, [dataset, filterableCourses, filterCourse]);
 
   // I derived the grid's columns and rows from the timegrid settings (and
   // I keyed days by the short names the engine uses, because keying them
@@ -1273,7 +1304,7 @@ export default function Timetable() {
         if (planCodes) return planCodes.has(p.course);
         // no plans defined: fall back to course level/majors
         if (filterYear && c?.level !== filterYear) return false;
-        if (filterMajor && c && c.majors.length && !c.majors.includes(filterMajor)) return false;
+        if (filterMajor && (!c || !c.majors.includes(filterMajor))) return false;
       }
       return true;
     });
@@ -1294,8 +1325,8 @@ export default function Timetable() {
   const flagged = new Set(previewing ? [] : validation?.flagged ?? []);
 
   const creditValues = useMemo(
-    () => [...new Set((dataset?.courses ?? []).map(c => c.credits))].sort((a, b) => a - b),
-    [dataset],
+    () => [...new Set(filterableCourses.map(c => c.credits))].sort((a, b) => a - b),
+    [filterableCourses],
   );
 
   // Cohort letters only matter for courses that actually run more than one
@@ -1930,7 +1961,7 @@ export default function Timetable() {
           )}
         >
           <option value="">All courses</option>
-          {semesterCourses.map(c => (
+          {filterableCourses.map(c => (
             <option key={c.code} value={c.code}>{c.code} · {c.title}</option>
           ))}
         </select>
