@@ -19,9 +19,6 @@ const DATA = [
   { to: "/students",   label: "Students",   icon: GraduationCap },
 ];
 
-const HELP = [
-  { to: "/how-to-use", label: "How to use", icon: HelpCircle },
-];
 
 interface SidebarProps {
   isOpen: boolean;
@@ -95,7 +92,7 @@ const Sidebar = ({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps)
       <nav className={cn("flex-1 py-2", collapsed ? "overflow-visible" : "overflow-y-auto")}>
         {collapsed ? (
           <div className="space-y-1 px-1.5">
-            {[...SCHEDULING, ...DATA, ...HELP].map(({ to, icon, label }) => (
+            {[...SCHEDULING, ...DATA].map(({ to, icon, label }) => (
               <NavItem key={to} to={to} icon={icon} label={label} collapsed onClick={() => isMobile && onClose()} />
             ))}
           </div>
@@ -121,34 +118,49 @@ const Sidebar = ({ isOpen, onClose, collapsed, onToggleCollapse }: SidebarProps)
                 ))}
               </div>
             </div>
-            <div>
-              <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/50">
-                Help
-              </div>
-              <div className="space-y-0.5">
-                {HELP.map(({ to, icon, label }) => (
-                  <NavItem key={to} to={to} icon={icon} label={label} collapsed={false} onClick={() => isMobile && onClose()} />
-                ))}
-              </div>
-            </div>
           </div>
         )}
       </nav>
 
-      <div className="px-4 pb-4 pt-2 shrink-0 flex flex-col items-center gap-2">
-        {!isMobile && (
-          <button
-            onClick={onToggleCollapse}
-            className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-          </button>
-        )}
-        {!collapsed && (
+      <div className="px-3 pb-4 pt-2 shrink-0 flex flex-col items-center gap-1">
+        {collapsed ? (
           <>
-            <p className="text-[10px] text-center text-muted-foreground/60">© Ashesi University</p>
-            <p className="text-[10px] text-center text-muted-foreground/40">All rights reserved</p>
+            <NavItem to="/how-to-use" icon={HelpCircle} label="How to use" collapsed onClick={() => isMobile && onClose()} />
+            {!isMobile && (
+              <button
+                onClick={onToggleCollapse}
+                className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
+                aria-label="Expand sidebar"
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <NavLink to="/how-to-use" onClick={() => isMobile && onClose()} className="w-full">
+              {({ isActive }) => (
+                <div className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors w-full",
+                  isActive
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}>
+                  <HelpCircle className="h-3.5 w-3.5 shrink-0" />
+                  How to use
+                </div>
+              )}
+            </NavLink>
+            {!isMobile && (
+              <button
+                onClick={onToggleCollapse}
+                className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
+                aria-label="Collapse sidebar"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
+            )}
+            <p className="text-[10px] text-center text-muted-foreground/40 mt-1">© Ashesi University</p>
           </>
         )}
       </div>

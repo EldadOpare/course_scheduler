@@ -190,7 +190,13 @@ def generate_payload(body: dict) -> dict:
     ds = _dataset(body)
     locked = _parse_placements(body, ds, key="locked")
     try:
-        options = gen.generate_options(ds, locked=locked)
+        # Budgets sized for a 10 s serverless ceiling (Vercel Hobby), leaving
+        # headroom for the OR-Tools cold-start import. CP-SAT typically returns
+        # in well under a second for a single semester; these caps only bite on
+        # pathologically hard inputs, where the heuristic profiles still give a
+        # usable draft. Set TIMETABLE_NO_SOLVER=1 to skip CP-SAT entirely.
+        options = gen.generate_options(
+            ds, locked=locked, solver_seconds=4.0, improve_seconds=0.5)
     except ValueError as e:
         return {"options": [], "error": str(e)}
     return {

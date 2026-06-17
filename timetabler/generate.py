@@ -12,6 +12,10 @@ from .models import Course, Dataset, Penalty, Placement, Violation, UNASSIGNED_F
 from .rules import soft
 from .rules.soft import ENGINEERING_SPACES
 
+# During polish, full-score only the most promising moves per meeting (ranked
+# by the cheap local estimate). Bounds the expensive whole-timetable rescore.
+_IMPROVE_TOP_K = 12
+
 PROFILES: dict[str, dict[str, int]] = {
     "Balanced": {},
     "Student-first": {
@@ -403,7 +407,11 @@ def _improve(ds: Dataset, placements: list[Placement],
             if cur.kind == "lab" and course.requires_room_type:
                 rooms = [r for r in rooms if r.type == course.requires_room_type]
 
-            best_cand, best_cand_total = None, best_total
+            # Gather feasible moves and rank them by the cheap local estimate,
+            # then pay for the full timetable rescore on only the few most
+            # promising ones. The full scorer is the expensive part, so this
+            # keeps polish fast even when a meeting has hundreds of legal slots.
+            feasible: list[tuple[int, Placement]] = []
             for day, start in timegrid.approved_slots(cur.kind, course.program,
                                                       ds.timegrid):
                 if time.monotonic() > deadline:
@@ -418,9 +426,16 @@ def _improve(ds: Dataset, placements: list[Placement],
                         continue
                     if partners and not _pairs_still_ok(idx, cand, partners):
                         continue
-                    t = total(others + [cand])
-                    if t < best_cand_total:
-                        best_cand, best_cand_total = cand, t
+                    feasible.append((_local_penalty(ds, others, cand, course, w), cand))
+            feasible.sort(key=lambda t: t[0])
+
+            best_cand, best_cand_total = None, best_total
+            for _, cand in feasible[:_IMPROVE_TOP_K]:
+                if time.monotonic() > deadline:
+                    break
+                t = total(others + [cand])
+                if t < best_cand_total:
+                    best_cand, best_cand_total = cand, t
             if best_cand is not None:
                 placements[i] = best_cand
                 best_total = best_cand_total
@@ -428,15 +443,59 @@ def _improve(ds: Dataset, placements: list[Placement],
     return placements
 
 
+def _solver_option(ds: Dataset, locked: list[Placement],
+                   max_seconds: float, improve_seconds: float,
+                   rng: random.Random) -> GenOption | None:
+    """Run the exact CP-SAT solver, if installed, then polish its result with
+    the same local search the heuristic uses, and wrap it as an 'Optimized'
+    option. CP-SAT guarantees a clash-free placement (and can place meetings
+    the bounded heuristic gives up on); the polish then minimises the full soft
+    score, which the solver's lighter objective does not capture on its own.
+
+    Returns None when OR-Tools is unavailable, finds nothing in time, or proves
+    the request infeasible — the heuristic profiles then explain what is stuck.
+    Never raises."""
+    try:
+        from . import solver
+    except Exception:
+        return None
+    if not solver.available():
+        return None
+    try:
+        res = solver.solve(ds, locked, max_seconds=max_seconds)
+    except Exception:
+        return None
+    if not res.feasible or not res.placements:
+        return None
+    locked_keys = {(p.course, p.section, p.kind, p.index) for p in locked}
+    polished = _improve(ds, res.placements, locked_keys,
+                        _weights({}), improve_seconds, rng)
+    total, penalties = engine.score(ds, polished)
+    violations = engine.validate(ds, polished)
+    # Only surface it if it is genuinely clean; otherwise the heuristic wins.
+    if violations:
+        return None
+    return GenOption("Optimized", polished, total, penalties, [], violations)
+
+
 def generate_options(ds: Dataset, locked: list[Placement] | None = None,
                      max_nodes: int = 4000, seed: int = 7,
                      improve_seconds: float = 1.0,
                      profiles: dict[str, dict[str, int]] | None = None,
+                     solver_seconds: float = 12.0,
                      ) -> list[GenOption]:
-    """One draft per profile, deduplicated, best first."""
+    """Best draft first. When OR-Tools is installed, an exact optimal draft is
+    offered alongside the heuristic trade-off profiles (Balanced, Student-first,
+    Faculty-first); otherwise just the profiles."""
     locked = locked or []
     locked_keys = {(p.course, p.section, p.kind, p.index) for p in locked}
     options: list[GenOption] = []
+
+    solver_opt = _solver_option(ds, locked, solver_seconds, improve_seconds,
+                                random.Random(seed))
+    if solver_opt is not None:
+        options.append(solver_opt)
+
     for i, (label, overrides) in enumerate((profiles or PROFILES).items()):
         rng = random.Random(seed + i * 101)  # nosec B311 — deterministic scheduling RNG, not used for crypto
         res = _generate_one(ds, locked, overrides, max_nodes, rng)

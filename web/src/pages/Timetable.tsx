@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   DndContext, DragOverlay,
   MouseSensor, TouchSensor, useSensor, useSensors, useDroppable, useDraggable,
@@ -9,17 +9,16 @@ import {
   CalendarDays, ChevronDown, ChevronRight, X, Loader2, Search, Check,
   Wand2, Download, CheckCircle2, AlertTriangle, Bookmark, FilterX, Trash2, CheckCheck,
   ListChecks, LayoutGrid, Columns3, Minus, Plus as PlusIcon, UserCheck, Wrench,
-  Pencil, Printer, Lock, Undo2,
+  Pencil, Printer, Lock, Undo2, MoveRight, ArrowRight, GitCompare, MoreHorizontal,
 } from "lucide-react";
 import { useTimetable } from "@/store/timetable";
 import {
   validate as apiValidate, suggest as apiSuggest,
   place as apiPlace, generate as apiGenerate,
 } from "@/lib/api";
-import { listSnapshots, saveSnapshot, deleteSnapshot } from "@/lib/supabase";
-import StatusBadge from "@/components/StatusBadge";
+import { listSnapshots, saveSnapshot, deleteSnapshot, loadSessionPlacements } from "@/lib/supabase";
 import type {
-  Placement, PlaceOption, Dataset, GenerateOption, TimetableSnapshot,
+  Placement, PlaceOption, Dataset, GenerateOption, TimetableSnapshot, TimetableSession,
 } from "@/types";
 import { mkKey, pmTime, ftTime, cohortLetter, UNASSIGNED_FACULTY } from "@/types";
 import { cn } from "@/lib/utils";
@@ -97,10 +96,12 @@ function layoutGrid(
 
 function PlacementChip({
   placement, lane, lanes, flagged, duration, top, cohort, facultyName, roomName, onClick,
+  chipId, flash, chipRef,
 }: {
   placement: Placement; lane: number; lanes: number; flagged: boolean;
   duration?: number; top: number; cohort?: string; facultyName?: string;
   roomName?: string; onClick?: () => void;
+  chipId?: string; flash?: boolean; chipRef?: (el: HTMLDivElement | null) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: mkKey(placement),
@@ -113,13 +114,16 @@ function PlacementChip({
 
   return (
     <div
-      ref={setNodeRef} {...listeners} {...attributes}
+      ref={el => { setNodeRef(el); chipRef?.(el); }}
+      id={chipId}
+      {...listeners} {...attributes}
       onClick={onClick}
       style={{ width, left, height, top: top + 2 }}
       className={cn(
         "absolute rounded-lg border text-[10px] px-2 py-1 cursor-grab select-none overflow-hidden transition-opacity",
         isDragging ? "opacity-30" : "opacity-100",
         flagged ? "ring-2 ring-destructive/50" : "",
+        flash ? "animate-pulse" : "",
         KIND_COLOR[placement.kind] ?? "bg-muted border-border text-muted-foreground",
       )}
     >
@@ -222,6 +226,7 @@ function Inspector({
   const loadSuggestions = useCallback(async () => {
     if (!target || !dataset || loading) return;
     setLoading(true);
+    setOptions([]);
     try {
       let data: { options: PlaceOption[] };
       if (target.day && target.startStr) {
@@ -249,6 +254,13 @@ function Inspector({
     }
   }, [target, dataset, placements, loading, tKey]);
 
+  // Auto-find the best times the moment the panel opens for a class, so the
+  // registrar sees ranked options immediately instead of hunting for a button.
+  useEffect(() => {
+    if (target && dataset && lastKey !== tKey && !loading) loadSuggestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps  -- run once per class
+  }, [tKey, dataset]);
+
   if (!target) return null;
 
   const course = dataset?.courses.find(c => c.code === target.courseCode);
@@ -257,7 +269,9 @@ function Inspector({
   return (
     <div className="fixed inset-y-0 right-0 z-40 w-72 shadow-xl md:static md:z-auto md:w-60 md:shadow-none shrink-0 border-l border-border bg-background flex flex-col">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">Inspector</span>
+        <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">
+          {target.day && target.startStr ? "Class" : "Place class"}
+        </span>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
           <X className="h-4 w-4" />
         </button>
@@ -271,36 +285,86 @@ function Inspector({
           </div>
         )}
       </div>
-      <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
-        <button
-          onClick={loadSuggestions}
-          disabled={loading}
-          className="flex items-center justify-center gap-1.5 w-full py-2 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
-        >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-          {loading ? "Loading..." : "Suggest slots"}
-        </button>
-        {options.map((opt, i) => (
+      <div className="p-3 flex flex-col gap-2.5 flex-1 overflow-y-auto">
+        <div className="flex items-center justify-between px-0.5">
+          <span className="text-[10px] tracking-[0.08em] uppercase text-muted-foreground/70">
+            {target.day && target.startStr ? "Alternatives" : "Best available times"}
+          </span>
           <button
-            key={i}
-            onClick={() => onPlace(opt)}
-            className="w-full text-left rounded-lg border border-border bg-background px-3 py-2.5 text-xs hover:border-primary/50 hover:bg-primary/5 transition-colors"
+            onClick={loadSuggestions}
+            disabled={loading}
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
           >
-            <div className="flex items-center justify-between gap-1 mb-0.5">
-              <span className="text-foreground">{opt.day} {opt.start}</span>
-              <span className={cn(
-                "px-1.5 py-0.5 rounded text-[10px]",
-                opt.percent >= 80 ? "bg-success/10 text-success" : "bg-muted text-muted-foreground",
-              )}>
-                {opt.percent}%
-              </span>
-            </div>
-            <div className="text-muted-foreground truncate">{opt.room_name}</div>
-            <div className="text-muted-foreground truncate">{opt.faculty_name}</div>
+            {loading
+              ? <><Loader2 className="h-3 w-3 animate-spin" /> Finding…</>
+              : <><Search className="h-3 w-3" /> {options.length ? "Refresh" : "Find"}</>}
           </button>
-        ))}
+        </div>
+
+        {/* Loading skeleton — three placeholder cards while the engine ranks slots */}
+        {loading && options.length === 0 && (
+          <div className="space-y-2">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="h-[60px] rounded-xl border border-border bg-muted/30 animate-pulse" />
+            ))}
+          </div>
+        )}
+
+        {options.map((opt, i) => {
+          // Translate the engine's score into plain language; no naked percentages.
+          const fit = opt.percent >= 80 ? "Great fit" : opt.percent >= 55 ? "Good fit" : "Workable";
+          return (
+            <button
+              key={i}
+              onClick={() => onPlace(opt)}
+              className="group w-full text-left rounded-xl border border-border bg-card px-3 py-2.5 hover:border-primary/50 hover:shadow-sm transition-all"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm text-foreground tabular-nums">
+                    {DAY_LABEL[opt.day] ?? opt.day} · {opt.start}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground truncate mt-0.5">{opt.room_name}</div>
+                  <div className="text-[11px] text-muted-foreground/80 truncate">{opt.faculty_name}</div>
+                </div>
+                {i === 0 && (
+                  <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-primary/10 text-primary text-[9px] font-medium tracking-[0.04em] uppercase">
+                    Best
+                  </span>
+                )}
+              </div>
+              {/* Calm fit meter — fills toward primary on hover, no green flood */}
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-foreground/25 group-hover:bg-primary/70 transition-colors"
+                    style={{ width: `${Math.max(opt.percent, 6)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-muted-foreground shrink-0">{fit}</span>
+              </div>
+            </button>
+          );
+        })}
+
         {!loading && options.length === 0 && lastKey === tKey && (
-          <p className="text-xs text-muted-foreground italic text-center pt-2">No valid options found.</p>
+          <div className="text-center py-8 px-2">
+            <CalendarDays className="h-6 w-6 text-muted-foreground/30 mx-auto mb-2" />
+            <p className="text-xs text-foreground">No clash-free times</p>
+            <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
+              Every slot conflicts with a room, lecturer, or another class. Free one up, or set a time manually below.
+            </p>
+          </div>
+        )}
+
+        {!loading && options.length === 0 && lastKey !== tKey && (
+          <button
+            onClick={loadSuggestions}
+            className="flex items-center justify-center gap-1.5 w-full py-2.5 text-xs rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <Search className="h-3.5 w-3.5" />
+            Find best times
+          </button>
         )}
 
         {/* manual entry — type the day/time/room directly, no drag needed */}
@@ -531,6 +595,17 @@ function printTimetable(placements: Placement[], dataset: Dataset, title: string
   // Revoke after the new window has had a moment to load from the blob URL.
   if (w) w.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
   else URL.revokeObjectURL(url);
+}
+
+function printForFaculty(placements: Placement[], dataset: Dataset, facultyId: string, facultyName: string) {
+  const filtered = placements.filter(p => p.faculty === facultyId);
+  printTimetable(filtered, dataset, `${facultyName} — Schedule`);
+}
+
+function printForYear(placements: Placement[], dataset: Dataset, year: number) {
+  const codes = new Set(dataset.courses.filter(c => c.level === year).map(c => c.code));
+  const filtered = placements.filter(p => codes.has(p.course));
+  printTimetable(filtered, dataset, `Year ${year} — Timetable`);
 }
 
 function SnapshotsModal({
@@ -894,6 +969,187 @@ function AvailabilityModal({
 
 const UNASSIGNED = UNASSIGNED_FACULTY;
 
+// Faculty load row — compact progress bar showing hours vs target
+function FacultyLoadRow({ name, hours, target, overload }: {
+  name: string; hours: number; target: number; overload: number;
+}) {
+  const pct = target > 0 ? Math.min(1, hours / target) : 0;
+  const over = hours > target;
+  const nearing = !over && target > 0 && hours > target * 0.85;
+  return (
+    <div className="px-1 space-y-0.5">
+      <div className="flex items-center justify-between gap-1">
+        <span className="text-[10px] text-foreground truncate flex-1">{name}</span>
+        <span className={cn(
+          "text-[10px] tabular-nums shrink-0",
+          over ? "text-destructive" : nearing ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+        )}>
+          {hours}h / {target}h
+        </span>
+      </div>
+      <div className="h-1 rounded-full bg-muted overflow-hidden">
+        <div
+          className={cn("h-full rounded-full transition-all",
+            over ? "bg-destructive" : nearing ? "bg-amber-500" : "bg-foreground/20")}
+          style={{ width: `${Math.min(100, pct * 100)}%` }}
+        />
+      </div>
+      {over && overload > 0 && (
+        <div className="text-[9px] text-destructive">
+          Overload limit: {overload}h
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Batch move modal — move all placements of a course to a different day
+function BatchMoveModal({ code, title, days, onMove, onClose }: {
+  code: string; title: string; days: string[]; onMove: (day: string) => void; onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-card border border-border rounded-xl p-5 w-72 shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-sm text-foreground">{code}</div>
+            <div className="text-[11px] text-muted-foreground">{title}</div>
+          </div>
+          <button onClick={onClose}><X className="h-4 w-4 text-muted-foreground" /></button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">Move all classes for this course to a different day.</p>
+        <div className="space-y-1.5">
+          {days.map(d => (
+            <button key={d} onClick={() => onMove(d)}
+              className="w-full text-left px-3 py-2 rounded-lg border border-border text-xs hover:border-primary/40 hover:bg-primary/5 transition-colors">
+              {DAY_LABEL[d] ?? d}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Session diff modal — compare current session against another
+function SessionDiffModal({ sessions, currentPlacements, onClose }: {
+  sessions: TimetableSession[];
+  currentPlacements: Placement[];
+  onClose: () => void;
+}) {
+  const [compareId, setCompareId] = useState(sessions[0]?.id ?? "");
+  const [loading, setLoading] = useState(false);
+  const [diff, setDiff] = useState<{
+    added: Placement[]; removed: Placement[]; moved: { from: Placement; to: Placement }[];
+  } | null>(null);
+
+  const runDiff = async () => {
+    if (!compareId) return;
+    setLoading(true);
+    try {
+      const other = await loadSessionPlacements(compareId);
+      const currentMap = new Map(currentPlacements.map(p => [mkKey(p), p]));
+      const otherMap = new Map(other.map(p => [mkKey(p), p]));
+      const added: Placement[] = [];
+      const removed: Placement[] = [];
+      const moved: { from: Placement; to: Placement }[] = [];
+      for (const [k, p] of currentMap) {
+        if (!otherMap.has(k)) added.push(p);
+        else {
+          const o = otherMap.get(k)!;
+          if (o.day !== p.day || o.start !== p.start || o.room !== p.room) {
+            moved.push({ from: o, to: p });
+          }
+        }
+      }
+      for (const [k, p] of otherMap) {
+        if (!currentMap.has(k)) removed.push(p);
+      }
+      setDiff({ added, removed, moved });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-card border border-border rounded-xl p-5 w-[480px] max-h-[80vh] flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4 shrink-0">
+          <div className="text-sm text-foreground">Compare sessions</div>
+          <button onClick={onClose}><X className="h-4 w-4 text-muted-foreground" /></button>
+        </div>
+        <div className="flex items-center gap-2 mb-4 shrink-0">
+          <select
+            value={compareId}
+            onChange={e => { setCompareId(e.target.value); setDiff(null); }}
+            className="flex-1 text-xs border border-border rounded-lg px-2 py-1.5 bg-background"
+          >
+            {sessions.map(s => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={runDiff}
+            disabled={loading || !compareId}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          >
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Compare"}
+          </button>
+        </div>
+        {diff && (
+          <div className="overflow-y-auto space-y-4 text-xs">
+            {diff.moved.length === 0 && diff.added.length === 0 && diff.removed.length === 0 && (
+              <p className="text-muted-foreground text-center py-4">No differences found.</p>
+            )}
+            {diff.moved.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground/60 mb-1.5">{diff.moved.length} moved</div>
+                <div className="space-y-1">
+                  {diff.moved.map(({ from, to }) => (
+                    <div key={mkKey(to)} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border">
+                      <span className="text-foreground shrink-0">{to.course}</span>
+                      <span className="text-muted-foreground">{from.day} {from.start}</span>
+                      <ArrowRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                      <span className="text-foreground">{to.day} {to.start}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {diff.added.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground/60 mb-1.5">{diff.added.length} added in current</div>
+                <div className="space-y-1">
+                  {diff.added.map(p => (
+                    <div key={mkKey(p)} className="px-3 py-2 rounded-lg border border-border text-foreground">
+                      {p.course} · {p.day} {p.start}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {diff.removed.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground/60 mb-1.5">{diff.removed.length} only in other session</div>
+                <div className="space-y-1">
+                  {diff.removed.map(p => (
+                    <div key={mkKey(p)} className="px-3 py-2 rounded-lg border border-border text-muted-foreground">
+                      {p.course} · {p.day} {p.start}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {!diff && !loading && (
+          <p className="text-xs text-muted-foreground">Select a session above and click Compare to see what changed.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // After a draft is generated we know the timetable is feasible; this is
 // where the registrar assigns the real lecturer (and optional faculty
 // intern) for each course/cohort already on the grid.
@@ -1132,6 +1388,14 @@ export default function Timetable() {
   const [filterRoom, setFilterRoom] = useState("");
   const [filterCourse, setFilterCourse] = useState("");
   const [filterCredits, setFilterCredits] = useState("");
+  const [flashKeys, setFlashKeys] = useState<Set<string>>(new Set());
+  const [loadPanelOpen, setLoadPanelOpen] = useState(false);
+  const [batchMoveTarget, setBatchMoveTarget] = useState<{ code: string; title: string } | null>(null);
+  const [printMenuOpen, setPrintMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const gridScrollRef = useRef<HTMLDivElement>(null);
+  const chipRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
@@ -1572,6 +1836,64 @@ export default function Timetable() {
     for (const p of stale) removePlacement(mkKey(p));
   }, [activeCourses, setActiveCourses, placements, removePlacement]);
 
+  const jumpToConflict = useCallback(() => {
+    const keys = new Set(validation?.flagged ?? []);
+    setFlashKeys(keys);
+    setTimeout(() => setFlashKeys(new Set()), 1500);
+    for (const key of keys) {
+      const el = chipRefs.current.get(key);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        break;
+      }
+    }
+  }, [validation]);
+
+  const batchMoveToDay = useCallback((code: string, newDay: string) => {
+    for (const p of placements) {
+      if (p.course === code) {
+        upsertPlacement({ ...p, day: newDay });
+      }
+    }
+    setBatchMoveTarget(null);
+  }, [placements, upsertPlacement]);
+
+  // Close overflow menus when clicking outside
+  useEffect(() => {
+    if (!printMenuOpen) return;
+    const close = () => setPrintMenuOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [printMenuOpen]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const close = () => setMoreOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [moreOpen]);
+
+  // Faculty hours for load panel
+  const facultyHours = useMemo(() => {
+    if (!dataset) return [];
+    const hourMap = new Map<string, number>();
+    for (const p of placements) {
+      if (!p.faculty || p.faculty === UNASSIGNED_FACULTY) continue;
+      const dur = (durations[p.kind] ?? 90) / 60;
+      hourMap.set(p.faculty, (hourMap.get(p.faculty) ?? 0) + dur);
+    }
+    return (dataset.faculty ?? [])
+      .filter(f => hourMap.has(f.id))
+      .map(f => ({
+        id: f.id,
+        name: f.name,
+        hours: Math.round((hourMap.get(f.id) ?? 0) * 10) / 10,
+        target: f.load_target ?? 9,
+        overload: f.max_overload ?? 12,
+      }))
+      .sort((a, b) => b.hours - a.hours);
+  }, [dataset, placements, durations]);
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
 
@@ -1635,121 +1957,204 @@ export default function Timetable() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <StatusBadge
-            valid={validation?.valid ?? null}
-            violations={validation?.violations.length}
-            score={validation?.score}
-          />
+        <div className="flex items-center gap-1.5">
+
+          {/* ── Semester courses ─────────────────────── */}
           <button
             onClick={() => setAvailOpen(true)}
             disabled={!dataset || published}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
           >
             <ListChecks className="h-3.5 w-3.5" />
-            This semester
+            Semester
             {semesterCourses.length > 0 && (
-              <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] tabular-nums">
+              <span className="px-1 py-0.5 rounded bg-muted text-muted-foreground text-[10px] tabular-nums leading-none">
                 {semesterCourses.length}
               </span>
             )}
           </button>
-          {validating && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            </span>
-          )}
+
+          <div className="w-px h-4 bg-border shrink-0" />
+
+          {/* ── Validation status ─────────────────────── */}
+          {validating && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />}
           {validation && !validation.valid && (
             <>
               <button
                 onClick={() => setShowConflicts(v => !v)}
                 className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors",
-                  showConflicts ? "border-destructive/50 bg-destructive/5 text-destructive" : "border-border hover:bg-muted",
+                  "flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border transition-colors",
+                  showConflicts
+                    ? "border-destructive/40 bg-destructive/5 text-destructive"
+                    : "border-destructive/20 text-destructive hover:bg-destructive/5",
                 )}
               >
                 <AlertTriangle className="h-3.5 w-3.5" />
-                {validation.violations.length} conflict{validation.violations.length !== 1 ? "s" : ""}
+                {validation.violations.length}
               </button>
               <button
                 onClick={handleAutoFix}
                 disabled={autoFixing || published}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-border hover:bg-muted text-muted-foreground transition-colors disabled:opacity-50"
               >
                 {autoFixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
-                {autoFixing ? "Fixing…" : "Auto-fix conflicts"}
+                {autoFixing ? "Fixing…" : "Auto-fix"}
               </button>
             </>
           )}
-          {!published && (
-            <button
-              onClick={undoPlacement}
-              disabled={!placementHistory.length}
-              title={placementHistory.length ? "Undo last change (⌘Z)" : "Nothing to undo"}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-40"
-            >
-              <Undo2 className="h-3.5 w-3.5" />
-              Undo
-            </button>
-          )}
-          <button
-            onClick={() => dataset && exportCsv(filterActive ? visiblePlacements : placements, dataset)}
-            disabled={!dataset || !placements.length}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export CSV
-          </button>
-          <button
-            onClick={() => dataset && printTimetable(placements, dataset, currentSession?.label ?? "Timetable")}
-            disabled={!dataset || !placements.length}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
-          >
-            <Printer className="h-3.5 w-3.5" />
-            Print
-          </button>
-          {!published && (
-            <button
-              onClick={() => setLecturersOpen(true)}
-              disabled={!dataset || !placements.length}
-              title={!placements.length ? "Place or generate classes first" : undefined}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
-            >
-              <UserCheck className="h-3.5 w-3.5" />
-              Lecturers
-            </button>
-          )}
-          <button
-            onClick={() => setSnapsOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
-          >
-            <Bookmark className="h-3.5 w-3.5" />
-            Saved versions
-          </button>
-          {!published && (
-            <button
-              onClick={() => setClearOpen(true)}
-              disabled={!dataset || (!placements.length && !activeCourses && !activeRooms)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-50"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Clear
-            </button>
-          )}
+
+          {/* ── Generate ─────────────────────────────── */}
           {!published && (
             <button
               onClick={handleGenerate}
               disabled={generating || !semesterCourses.length}
-              title={!semesterCourses.length ? "Pick courses in 'This semester' first" : undefined}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
+              title={!semesterCourses.length ? "Pick courses in 'Semester' first" : undefined}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors disabled:opacity-50",
+                !placements.length
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "border border-border hover:bg-muted",
+              )}
             >
-              {generating
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                : <Wand2 className="h-3.5 w-3.5" />}
-              {generating ? "Scheduling…" : "Auto-schedule"}
+              {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+              {generating ? "Scheduling…" : "Generate"}
             </button>
           )}
-          {/* Publish locks the timetable as the official version; unpublish to edit again. */}
+
+          <div className="w-px h-4 bg-border shrink-0" />
+
+          {/* ── Undo (icon-only) ─────────────────────── */}
+          {!published && (
+            <button
+              onClick={undoPlacement}
+              disabled={!placementHistory.length}
+              title={placementHistory.length ? "Undo (⌘Z)" : "Nothing to undo"}
+              className="p-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground transition-colors disabled:opacity-40"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+
+          {/* ── Export ▾ (CSV + Print) ───────────────── */}
+          <div className="relative">
+            <button
+              onClick={() => { setPrintMenuOpen(v => !v); setMoreOpen(false); }}
+              disabled={!dataset || !placements.length}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export
+              <ChevronDown className="h-3 w-3 opacity-50" />
+            </button>
+            {printMenuOpen && dataset && (
+              <div className="absolute right-0 top-full mt-1.5 w-52 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden text-xs">
+                <div className="py-1">
+                  <button
+                    onClick={() => { exportCsv(filterActive ? visiblePlacements : placements, dataset); setPrintMenuOpen(false); }}
+                    className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2"
+                  >
+                    <Download className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    Download CSV
+                  </button>
+                  <button
+                    onClick={() => { printTimetable(placements, dataset, currentSession?.label ?? "Timetable"); setPrintMenuOpen(false); }}
+                    className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2"
+                  >
+                    <Printer className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    Print full timetable
+                  </button>
+                </div>
+                {dataset.faculty.length > 0 && (
+                  <>
+                    <div className="border-t border-border" />
+                    <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-[0.06em] text-muted-foreground/50">By lecturer</div>
+                    <div className="max-h-36 overflow-y-auto pb-1">
+                      {dataset.faculty.map(f => (
+                        <button key={f.id}
+                          onClick={() => { printForFaculty(placements, dataset, f.id, f.name); setPrintMenuOpen(false); }}
+                          className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors truncate"
+                        >
+                          {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <div className="border-t border-border" />
+                <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-[0.06em] text-muted-foreground/50">By year</div>
+                <div className="pb-1">
+                  {[1, 2, 3, 4].map(y => (
+                    <button key={y}
+                      onClick={() => { printForYear(placements, dataset, y); setPrintMenuOpen(false); }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors"
+                    >
+                      Year {y}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── More ▾ (Lecturers, Saved, Compare, Clear) ─ */}
+          <div className="relative">
+            <button
+              onClick={() => { setMoreOpen(v => !v); setPrintMenuOpen(false); }}
+              title="More options"
+              className="p-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground transition-colors"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+            {moreOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-48 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden text-xs">
+                <div className="py-1">
+                  {!published && (
+                    <button
+                      onClick={() => { setLecturersOpen(true); setMoreOpen(false); }}
+                      disabled={!dataset || !placements.length}
+                      className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <UserCheck className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      Assign lecturers
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setSnapsOpen(true); setMoreOpen(false); }}
+                    className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2"
+                  >
+                    <Bookmark className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    Saved versions
+                  </button>
+                  {sessions.length > 1 && (
+                    <button
+                      onClick={() => { setDiffOpen(true); setMoreOpen(false); }}
+                      className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2"
+                    >
+                      <GitCompare className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      Compare sessions
+                    </button>
+                  )}
+                  {!published && (
+                    <>
+                      <div className="my-1 border-t border-border" />
+                      <button
+                        onClick={() => { setClearOpen(true); setMoreOpen(false); }}
+                        disabled={!dataset || (!placements.length && !activeCourses && !activeRooms)}
+                        className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground hover:text-destructive disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                        Clear board
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="w-px h-4 bg-border shrink-0" />
+
+          {/* ── Publish ──────────────────────────────── */}
           {published ? (
             <button
               onClick={() => setPublished(false)}
@@ -1876,17 +2281,14 @@ export default function Timetable() {
           </div>
           <ul className="space-y-1.5">
             {validation.violations.map((v, i) => (
-              <li key={i} className="flex items-start gap-2.5 text-xs">
+              <li key={i} onClick={jumpToConflict} className="flex items-start gap-2.5 text-xs cursor-pointer hover:bg-muted/50 rounded px-1 -mx-1 py-0.5 transition-colors">
                 <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-destructive shrink-0" />
-                <span className="leading-snug">
-                  <span className="text-foreground">{CONFLICT_LABEL[v.code] ?? "Conflict"}:</span>
-                  <span className="text-muted-foreground"> {tidy(v.message)}</span>
-                </span>
+                <span className="leading-snug text-muted-foreground">{tidy(v.message)}</span>
               </li>
             ))}
           </ul>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Tip: try Auto-fix, or click a flagged class (outlined in red) to move it.
+            Drag a highlighted class to a new slot to fix it.
           </p>
         </div>
       )}
@@ -2073,6 +2475,16 @@ export default function Timetable() {
                             <div className="text-[11px] font-mono text-primary leading-tight">{g.code}</div>
                             <div className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{g.title}</div>
                           </div>
+                          {/* batch move button */}
+                          {!published && (
+                            <button
+                              onClick={() => setBatchMoveTarget({ code: g.code, title: g.title })}
+                              title="Move all classes to another day"
+                              className="p-0.5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                            >
+                              <MoveRight className="h-3 w-3" />
+                            </button>
+                          )}
                           {/* per-course cohort stepper */}
                           <div className="flex items-center gap-0.5 shrink-0 mt-0.5" title="Cohorts this semester">
                             <button
@@ -2124,6 +2536,22 @@ export default function Timetable() {
                         )}
                       </div>
                     ))}
+                {facultyHours.length > 0 && (
+                  <div className="border-t border-border mt-2 pt-2">
+                    <button
+                      onClick={() => setLoadPanelOpen(v => !v)}
+                      className="w-full flex items-center justify-between px-1 py-1 text-[10px] uppercase tracking-[0.06em] text-muted-foreground/70 hover:text-foreground transition-colors"
+                    >
+                      Lecturer hours
+                      {loadPanelOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    </button>
+                    {loadPanelOpen && (
+                      <div className="space-y-1.5 mt-1">
+                        {facultyHours.map(f => <FacultyLoadRow key={f.id} {...f} />)}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2185,6 +2613,12 @@ export default function Timetable() {
                               facultyName={facultyOf.get(s.placement.faculty)}
                               roomName={roomOf.get(s.placement.room)}
                               flagged={flagged.has(mkKey(s.placement))}
+                              chipId={mkKey(s.placement)}
+                              flash={flashKeys.has(mkKey(s.placement))}
+                              chipRef={(el) => {
+                                if (el) chipRefs.current.set(mkKey(s.placement), el);
+                                else chipRefs.current.delete(mkKey(s.placement));
+                              }}
                               onClick={previewing || published ? undefined : () => setInspector({
                                 courseCode: s.placement.course,
                                 section: s.placement.section,
@@ -2274,6 +2708,12 @@ export default function Timetable() {
                             cohort={multiSection.has(s.placement.course) ? cohortLetter(s.placement.section) : undefined}
                             facultyName={facultyOf.get(s.placement.faculty)}
                             flagged={flagged.has(mkKey(s.placement))}
+                            chipId={mkKey(s.placement)}
+                            flash={flashKeys.has(mkKey(s.placement))}
+                            chipRef={(el) => {
+                              if (el) chipRefs.current.set(mkKey(s.placement), el);
+                              else chipRefs.current.delete(mkKey(s.placement));
+                            }}
                             onClick={previewing || published ? undefined : () => setInspector({
                               courseCode: s.placement.course,
                               section: s.placement.section,
@@ -2350,6 +2790,24 @@ export default function Timetable() {
             onSaveAndClear={saveThenClear}
             onClearOnly={clearBoard}
             onClose={() => setClearOpen(false)}
+          />
+        )}
+
+        {batchMoveTarget && !published && (
+          <BatchMoveModal
+            code={batchMoveTarget.code}
+            title={batchMoveTarget.title}
+            days={days}
+            onMove={(day) => batchMoveToDay(batchMoveTarget.code, day)}
+            onClose={() => setBatchMoveTarget(null)}
+          />
+        )}
+
+        {diffOpen && sessions.length > 1 && (
+          <SessionDiffModal
+            sessions={sessions.filter(s => s.id !== currentSession?.id)}
+            currentPlacements={placements}
+            onClose={() => setDiffOpen(false)}
           />
         )}
 

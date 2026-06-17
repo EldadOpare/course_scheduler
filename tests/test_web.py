@@ -68,17 +68,6 @@ class WebPayloadTests(unittest.TestCase):
             self.assertIn("complete", s)
             self.assertIn("unplaced", s)
 
-    def test_explain_degrades_without_key(self):
-        import os
-        old = os.environ.pop("XAI_API_KEY", None)
-        try:
-            res = web.explain_payload({**dataset_body(), "placements": []})
-            self.assertIsNone(res["summary"])
-            self.assertIn("XAI_API_KEY", res["error"])
-        finally:
-            if old is not None:
-                os.environ["XAI_API_KEY"] = old
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -161,22 +161,16 @@ export default function HowToUse() {
         />
 
         {/* Readiness checklist */}
-        <div className={cn(
-          "rounded-xl border p-5",
-          allDone ? "bg-success/5 border-success/30" : "bg-card border-border",
-        )}>
+        <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/50">
-              Setup progress
+              Setup checklist
             </div>
-            <span className={cn(
-              "text-xs tabular-nums",
-              allDone ? "text-success" : "text-muted-foreground",
-            )}>
-              {doneCount} / {checks.length} done
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {doneCount} / {checks.length}
             </span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
             {checks.map(({ label, done, to }) => (
               <button
                 key={label}
@@ -185,20 +179,20 @@ export default function HowToUse() {
                   "flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-xs transition-colors",
                   done
                     ? "text-foreground cursor-default"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer",
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
                 {done
-                  ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                  : <Circle className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />}
-                {label}
+                  ? <CheckCircle2 className="h-3.5 w-3.5 text-foreground/40 shrink-0" />
+                  : <Circle className="h-3.5 w-3.5 text-border shrink-0" />}
+                <span className={done ? "line-through text-muted-foreground/60" : ""}>{label}</span>
                 {!done && <ArrowRight className="h-3 w-3 ml-auto text-muted-foreground/40 shrink-0" />}
               </button>
             ))}
           </div>
           {allDone && (
-            <p className="mt-3 text-xs text-success/80 leading-relaxed">
-              Everything is set up. You can publish your timetable when there are no remaining conflicts.
+            <p className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground leading-relaxed">
+              Setup complete — publish your timetable once there are no remaining conflicts.
             </p>
           )}
         </div>

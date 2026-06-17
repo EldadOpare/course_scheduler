@@ -1,2 +1,12 @@
-# Python stdlib only — no external dependencies.
-# This file exists so Vercel detects the Python runtime for api/*.py.
+# Python dependencies Vercel installs for the api/*.py serverless functions.
+#
+# Kept to the standard library on purpose. The CP-SAT solver
+# (timetabler/solver.py) is intentionally NOT listed here: ortools plus its
+# numpy/protobuf/pandas dependencies can approach Vercel Hobby's 250 MB
+# function size limit and lengthen cold starts. The engine detects when
+# ortools is absent and automatically uses the heuristic generator, so the
+# deployed app works exactly the same — just without the optional exact solver.
+#
+# To enable CP-SAT locally or on a host without those limits:
+#     pip install -r requirements-solver.txt
+# (or set TIMETABLE_NO_SOLVER=1 to force the heuristic even when it is present.)

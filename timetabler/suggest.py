@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from . import engine, timegrid
 from .models import Dataset, Placement, fmt_time, UNASSIGNED_FACULTY
+from .rules import hard
 
 
 @dataclass
@@ -48,8 +49,14 @@ def suggest(ds: Dataset, placements: list[Placement], course_code: str,
         if not (p.course == course_code and p.section == section
                 and p.kind == kind and p.index == index)
     ]
-    baseline = len(engine.validate(ds, others))
     need = ds.section_enrollment(course)
+
+    # One reusable view of the fixed `others` set. A candidate is legal iff it
+    # adds no new hard violation, which only a single new meeting can affect —
+    # so each candidate is checked incrementally instead of revalidating the
+    # whole timetable. The score (for ranking) is computed only for the
+    # candidates that survive the filter, not for every slot/room/teacher.
+    ctx = hard.build_context(ds, others)
 
     options: list[Option] = []
     for fac_id in candidate_faculty(ds, others, course_code, section):
@@ -62,7 +69,7 @@ def suggest(ds: Dataset, placements: list[Placement], course_code: str,
                     continue
                 cand = ds.make_placement(course_code, section, kind, index,
                                          day, start, room.id, fac_id)
-                if len(engine.validate(ds, others + [cand])) > baseline:
+                if hard.candidate_adds_violation(ds, ctx, cand):
                     continue
                 total, _ = engine.score(ds, others + [cand])
                 options.append(Option(cand, total, 0))

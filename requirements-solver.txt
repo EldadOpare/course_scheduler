@@ -1,0 +1,12 @@
+# Optional: the exact CP-SAT timetable solver (timetabler/solver.py).
+#
+# Not installed on Vercel by default (see requirements.txt) because the wheel
+# and its dependencies are large for a free-tier serverless function. Install
+# it for local development, or on a host/plan without tight size and timeout
+# limits, to get provably-optimal drafts and true infeasibility detection:
+#
+#     pip install -r requirements-solver.txt
+#
+# When present, generation offers an "Optimized" draft alongside the heuristic
+# profiles. When absent, everything falls back to the heuristic automatically.
+ortools>=9.10

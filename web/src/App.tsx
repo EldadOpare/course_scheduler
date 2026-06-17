@@ -1,18 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import Layout from "@/components/Layout";
-import Dashboard from "@/pages/Dashboard";
-import Timetable from "@/pages/Timetable";
-import Courses from "@/pages/Courses";
-import FacultyPage from "@/pages/Faculty";
-import Rooms from "@/pages/Rooms";
-import StudentsPage from "@/pages/Students";
-import HowToUse from "@/pages/HowToUse";
 import { Toaster } from "@/components/ui/toaster";
 import { useTimetable } from "@/store/timetable";
 import { loadDataset, listSessions, loadSessionPlacements, supabase } from "@/lib/supabase";
 import AppLoader from "@/components/AppLoader";
+
+// Each page is its own chunk so the first paint ships only what it needs. The
+// timetable page in particular pulls in drag-and-drop and the scheduling grid,
+// which no longer weigh down the dashboard, data pages, or first load.
+const Dashboard    = lazy(() => import("@/pages/Dashboard"));
+const Timetable    = lazy(() => import("@/pages/Timetable"));
+const Courses      = lazy(() => import("@/pages/Courses"));
+const FacultyPage  = lazy(() => import("@/pages/Faculty"));
+const Rooms        = lazy(() => import("@/pages/Rooms"));
+const StudentsPage = lazy(() => import("@/pages/Students"));
+const HowToUse     = lazy(() => import("@/pages/HowToUse"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -84,6 +89,15 @@ function AppInit({ onReady }: { onReady: () => void }) {
   return null;
 }
 
+// Shown briefly while a page's chunk loads on first navigation to it.
+function PageFallback() {
+  return (
+    <div className="flex-1 flex items-center justify-center h-full">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/50" />
+    </div>
+  );
+}
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [loaderGone, setLoaderGone] = useState(false);
@@ -99,16 +113,18 @@ export default function App() {
       <BrowserRouter>
         {!loaderGone && <AppLoader exiting={ready} />}
         <AppInit onReady={handleReady} />
-        <Routes>
-          <Route element={<Layout><Dashboard /></Layout>} path="/dashboard" />
-          <Route element={<Layout><Timetable /></Layout>} path="/timetable" />
-          <Route element={<Layout><Courses /></Layout>} path="/courses" />
-          <Route element={<Layout><FacultyPage /></Layout>} path="/faculty" />
-          <Route element={<Layout><Rooms /></Layout>} path="/classrooms" />
-          <Route element={<Layout><StudentsPage /></Layout>} path="/students" />
-          <Route element={<Layout><HowToUse /></Layout>} path="/how-to-use" />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route element={<Layout><Dashboard /></Layout>} path="/dashboard" />
+            <Route element={<Layout><Timetable /></Layout>} path="/timetable" />
+            <Route element={<Layout><Courses /></Layout>} path="/courses" />
+            <Route element={<Layout><FacultyPage /></Layout>} path="/faculty" />
+            <Route element={<Layout><Rooms /></Layout>} path="/classrooms" />
+            <Route element={<Layout><StudentsPage /></Layout>} path="/students" />
+            <Route element={<Layout><HowToUse /></Layout>} path="/how-to-use" />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </Suspense>
         <Toaster />
       </BrowserRouter>
     </QueryClientProvider>
